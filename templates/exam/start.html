@@ -84,27 +84,60 @@
       <button class="btn ghost small danger" type="submit">Delete all results</button>
     </form>
   </div>
-  <table>
-    <tr><th>Taken</th><th>Candidate</th><th class="num">Raw</th><th class="num">Scaled</th><th>Result</th><th></th></tr>
-    {% for a in recent %}
-    <tr>
-      <td>{{ a.submitted_at|date:"j M Y, H:i" }}</td>
-      <td>{{ a.candidate|default:"&mdash;" }}</td>
-      <td class="num">{{ a.raw_correct }}/{{ a.order|length }}</td>
-      <td class="num">{{ a.scaled_score }}</td>
-      <td>{% if a.passed %}<span class="tag ok">Pass</span>{% else %}<span class="tag bad">Fail</span>{% endif %}</td>
-      <td class="num" style="white-space:nowrap">
-        <a href="{% url 'results' a.id %}">view</a>
-        &nbsp;
-        <form class="inline-form" method="post" action="{% url 'delete_attempt' a.id %}"
-              onsubmit="return confirm('Delete this result permanently?');">
-          {% csrf_token %}
-          <button class="btn ghost small danger" type="submit">Delete</button>
-        </form>
-      </td>
-    </tr>
-    {% endfor %}
-  </table>
+  <form id="delete-selected-form" method="post" action="{% url 'delete_selected_attempts' %}"
+        onsubmit="return confirm('Delete selected attempts? This cannot be undone.');">
+    {% csrf_token %}
+    <div style="margin-bottom:12px">
+      <button id="delete-selected-btn" class="btn ghost small danger" type="submit" disabled>Delete selected</button>
+    </div>
+    <table>
+      <tr>
+        <th style="width:30px"></th>
+        <th>Taken</th>
+        <th>Candidate</th>
+        <th class="num">Raw</th>
+        <th class="num">Scaled</th>
+        <th>Result</th>
+        <th></th>
+      </tr>
+      {% for a in recent %}
+      <tr>
+        <td style="text-align:center">
+          <input type="checkbox" name="attempt_ids" value="{{ a.id }}" class="attempt-checkbox">
+        </td>
+        <td>{{ a.submitted_at|date:"j M Y, H:i" }}</td>
+        <td>{{ a.candidate|default:"&mdash;" }}</td>
+        <td class="num">{{ a.raw_correct }}/{{ a.order|length }}</td>
+        <td class="num">{{ a.scaled_score }}</td>
+        <td>{% if a.passed %}<span class="tag ok">Pass</span>{% else %}<span class="tag bad">Fail</span>{% endif %}</td>
+        <td class="num" style="white-space:nowrap">
+          <a href="{% url 'results' a.id %}">view</a>
+          &nbsp;
+          <form class="inline-form" method="post" action="{% url 'delete_attempt' a.id %}"
+                onsubmit="return confirm('Delete this result permanently?');">
+            {% csrf_token %}
+            <button class="btn ghost small danger" type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </table>
+  </form>
+  <script>
+    (function() {
+      var checkboxes = document.querySelectorAll('.attempt-checkbox');
+      var deleteBtn = document.getElementById('delete-selected-btn');
+      
+      function updateDeleteButton() {
+        var anyChecked = Array.from(checkboxes).some(function(cb) { return cb.checked; });
+        deleteBtn.disabled = !anyChecked;
+      }
+      
+      checkboxes.forEach(function(cb) {
+        cb.addEventListener('change', updateDeleteButton);
+      });
+    })();
+  </script>
 </div>
 {% endif %}
 {% endblock %}

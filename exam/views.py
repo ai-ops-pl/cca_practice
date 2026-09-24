@@ -279,3 +279,37 @@ def delete_all_results(request):
         "All saved results were deleted." if count else "There were no saved results to delete.",
     )
     return redirect("start")
+
+
+@require_POST
+def delete_selected_attempts(request):
+    """CS-3: Delete multiple selected finished attempts."""
+    attempt_ids = request.POST.getlist("attempt_ids")
+    
+    if not attempt_ids:
+        messages.info(request, "No attempts were selected.")
+        return redirect("start")
+    
+    # Only delete finished attempts (exclude in-progress and paused)
+    selected = Attempt.objects.filter(
+        pk__in=attempt_ids,
+        submitted_at__isnull=False
+    )
+    
+    count = selected.count()
+    
+    # Clear session pointer if current attempt is being deleted
+    current = request.session.get("attempt_id")
+    if current and selected.filter(pk=current).exists():
+        request.session.pop("attempt_id", None)
+    
+    selected.delete()
+    
+    if count == 1:
+        messages.success(request, "1 attempt was deleted.")
+    elif count > 1:
+        messages.success(request, f"{count} attempts were deleted.")
+    else:
+        messages.info(request, "No finished attempts were selected.")
+    
+    return redirect("start")

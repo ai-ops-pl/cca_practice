@@ -388,3 +388,161 @@ class ExamFlowTests(TestCase):
         resp = self.client.get(f"/attempt/{attempt.id}/delete/")
         self.assertEqual(resp.status_code, 405)  # Method Not Allowed
         self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())
+
+    # -- CS-3: Multi-select delete ----------------------------------------
+    def test_multi_select_delete_removes_selected_only(self):
+        """AC1,3: Delete only selected finished attempts; unselected remain."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        third = self._start()
+        self.client.post(f"/attempt/{third.id}/submit/", {"full_form": "1"})
+        
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 3)
+        
+        # Delete first and third, keep second
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(first.id), str(third.id)]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=second.id).exists())
+        self.assertFalse(Attempt.objects.filter(pk=third.id).exists())
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 1)
+
+    def test_multi_select_delete_one_attempt(self):
+        """AC1: Multi-select can delete just one attempt."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(attempt.id)]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_multi_select_ignores_in_progress_attempts(self):
+        """AC4: In-progress/paused attempts not deletable via multi-select."""
+        finished = self._start()
+        self.client.post(f"/attempt/{finished.id}/submit/", {"full_form": "1"})
+        in_progress = self._start()
+        paused = self._start()
+        self.client.post(f"/attempt/{paused.id}/pause/", {"state": "pause"})
+        
+        # Try to delete all three; only finished should be deleted
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(finished.id), str(in_progress.id), str(paused.id)]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=finished.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=in_progress.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=paused.id).exists())
+
+    def test_multi_select_delete_returns_404(self):
+        """AC5: After multi-select delete, URLs return 404."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(first.id), str(second.id)]}
+        )
+        
+        self.assertEqual(self.client.get(f"/attempt/{first.id}/results/").status_code, 404)
+        self.assertEqual(self.client.get(f"/attempt/{second.id}/review/").status_code, 404)
+
+    def test_multi_select_delete_clears_session(self):
+        """AC6: Clear session pointer if current attempt is deleted."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        # Session points to second
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        
+        # Delete both including current
+        self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(first.id), str(second.id)]}
+        )
+        self.assertIsNone(self.client.session.get("attempt_id"))
+
+    def test_multi_select_delete_preserves_session_if_not_deleted(self):
+        """AC6: Preserve session if current attempt not in selection."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        
+        # Delete only first
+        self.client.post("/results/delete-selected/", {"attempt_ids": [str(first.id)]})
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+
+    def test_single_delete_still_works(self):
+        """AC7: Existing single delete remains available."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        # Use old single-delete endpoint
+        self.client.post(f"/attempt/{first.id}/delete/")
+        self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=second.id).exists())
+
+    def test_delete_all_still_works_with_multi_select(self):
+        """AC7: Existing delete-all remains available."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        in_progress = self._start()
+        
+        self.client.post("/results/delete-all/", follow=True)
+        self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
+        self.assertFalse(Attempt.objects.filter(pk=second.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=in_progress.id).exists())
+
+    def test_multi_select_delete_is_post_only(self):
+        """AC8: Multi-delete is POST only; GET must not delete."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.get("/results/delete-selected/")
+        self.assertEqual(resp.status_code, 405)
+        self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_multi_select_delete_with_no_selection(self):
+        """Multi-select with empty selection redirects without error."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.post("/results/delete-selected/", {"attempt_ids": []}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_multi_select_delete_with_invalid_ids(self):
+        """Multi-select ignores non-existent or invalid attempt IDs."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(attempt.id), fake_id]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())

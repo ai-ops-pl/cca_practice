@@ -43,7 +43,21 @@ def start(request):
 
 @require_POST
 def begin(request):
+    form_type = request.POST.get("form", "full")
+    if form_type not in ["full", "short"]:
+        form_type = "full"
+    
     questions = list(Question.objects.all())
+    
+    # For short form, sample 30 questions maintaining domain weights
+    if form_type == "short":
+        try:
+            from .formbuild import sample_short_form
+            questions = sample_short_form(questions)
+        except Exception as exc:
+            messages.error(request, f"Cannot create short form: {exc}")
+            return redirect("start")
+    
     numbers = [q.number for q in questions]
     if not numbers:
         messages.error(request, "No questions loaded. Run: python manage.py load_questions")
@@ -60,9 +74,13 @@ def begin(request):
     else:
         numbers.sort()
 
+    # Set duration based on form type
+    duration = 60 if form_type == "short" else 120
+
     attempt = Attempt.objects.create(
         candidate=request.POST.get("candidate", "").strip()[:120],
-        duration_minutes=_cfg()["DURATION_MINUTES"],
+        form_type=form_type,
+        duration_minutes=duration,
         order=numbers,
         answers={},
         flagged=[],

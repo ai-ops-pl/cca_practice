@@ -546,3 +546,227 @@ class ExamFlowTests(TestCase):
         )
         self.assertEqual(resp.status_code, 200)
         self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    # -- CS-2: Short practice form -----------------------------------------
+    def test_start_page_offers_form_choice(self):
+        """AC1: Candidate can choose Full exam or Short practice before Start."""
+        resp = self.client.get("/")
+        self.assertContains(resp, "Full exam")
+        self.assertContains(resp, "Short practice")
+        self.assertContains(resp, "60 items")
+        self.assertContains(resp, "30 items")
+
+    def test_short_form_contains_30_questions(self):
+        """AC2: Short attempt contains exactly 30 questions."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short", "shuffle": "on"}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.form_type, "short")
+        self.assertEqual(len(attempt.order), 30)
+        self.assertEqual(len(attempt.questions()), 30)
+
+    def test_full_form_contains_60_questions(self):
+        """AC2: Full attempt still contains all 60 questions."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "full", "shuffle": "on"}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.form_type, "full")
+        self.assertEqual(len(attempt.order), 60)
+
+    def test_short_form_sampling_maintains_domain_weights(self):
+        """AC3: Short form keeps domain weights close to published mix."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        questions = attempt.questions()
+        counts = {}
+        for q in questions:
+            counts[q.domain] = counts.get(q.domain, 0) + 1
+        
+        # Expected split for 30 items: D1 8, D2 5, D3 6, D4 6, D5 5
+        self.assertEqual(counts.get("D1", 0), 8, "D1 should have 8 items")
+        self.assertEqual(counts.get("D2", 0), 5, "D2 should have 5 items")
+        self.assertEqual(counts.get("D3", 0), 6, "D3 should have 6 items")
+        self.assertEqual(counts.get("D4", 0), 6, "D4 should have 6 items")
+        self.assertEqual(counts.get("D5", 0), 5, "D5 should have 5 items")
+
+    def test_short_form_shuffles_and_validates_bank(self):
+        """AC4: Short form still shuffles options and validates bank."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short", "shuffle": "on"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        # Check option shuffling
+        self.assertTrue(attempt.presentation)
+        singles = [q for q in attempt.questions() if q.qtype == "single"]
+        display = [next(iter(attempt.display_correct(q))) for q in singles]
+        self.assertGreater(len(set(display)), 1, "Correct answers should be shuffled off A")
+
+    def test_short_form_has_60_minute_timer(self):
+        """AC4: Short form timer is 60 minutes."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.duration_minutes, 60)
+        self.assertAlmostEqual(attempt.seconds_remaining, 3600, delta=5)
+
+    def test_full_form_has_120_minute_timer(self):
+        """AC4: Full form still has 120 minute timer."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "full"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.duration_minutes, 120)
+        self.assertAlmostEqual(attempt.seconds_remaining, 7200, delta=5)
+
+    def test_short_form_supports_pause_resume(self):
+        """AC4: Short form supports pause/resume with timer freeze."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        self.client.post(f"/attempt/{attempt.id}/pause/", {"state": "pause"})
+        attempt.refresh_from_db()
+        self.assertTrue(attempt.is_paused)
+        
+        before = attempt.seconds_remaining
+        attempt.started_at -= timedelta(minutes=10)
+        attempt.paused_at -= timedelta(minutes=10)
+        attempt.save(update_fields=["started_at", "paused_at"])
+        
+        frozen = attempt.seconds_remaining
+        self.assertAlmostEqual(frozen, before, delta=5)
+
+    def test_short_form_can_include_multi_select(self):
+        """AC5: Multi-select items can appear in short form."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        multi_items = [q for q in attempt.questions() if q.qtype == "multi"]
+        # We don't guarantee multi items, but if they exist in the bank and are sampled, grading works
+        if multi_items:
+            multi = multi_items[0]
+            correct = attempt.display_correct(multi)
+            partial = sorted(correct)[:1]
+            attempt.answers = {str(multi.number): partial}
+            result = attempt.score()
+            self.assertEqual(result["correct"], 0, "partial credit not awarded in short form")
+
+    def test_short_form_answered_count_uses_30(self):
+        """AC6: Answered X/Y uses attempt's actual length (30 for short)."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        q1 = attempt.questions()[0]
+        q2 = attempt.questions()[1]
+        attempt.answers = {str(q1.number): ["A"], str(q2.number): ["B"]}
+        attempt.save()
+        
+        self.assertEqual(attempt.answered_count, 2)
+        take = self.client.get(f"/attempt/{attempt.id}/")
+        # The template should show "2/30" not "2/60"
+        self.assertContains(take, "Question 30")
+
+    def test_short_form_score_uses_30_items(self):
+        """AC7: Scaled score uses 70% raw → 720 cut based on 30 items."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        # Answer 21/30 correctly (70% raw)
+        payload = {"full_form": "1"}
+        for i, q in enumerate(attempt.questions()):
+            if i < 21:
+                payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        attempt.refresh_from_db()
+        
+        self.assertEqual(attempt.raw_correct, 21)
+        self.assertEqual(attempt.scaled_score, 720)
+        self.assertTrue(attempt.passed)
+
+    def test_short_form_one_below_cut_fails(self):
+        """AC7: 20/30 = 66.67% raw should be below 720 and fail."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        payload = {"full_form": "1"}
+        for i, q in enumerate(attempt.questions()):
+            if i < 20:
+                payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        attempt.refresh_from_db()
+        
+        self.assertEqual(attempt.raw_correct, 20)
+        self.assertLess(attempt.scaled_score, 720)
+        self.assertFalse(attempt.passed)
+
+    def test_short_form_perfect_score(self):
+        """AC7: 30/30 = 100% raw should give scaled max (1000)."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        payload = {"full_form": "1"}
+        for q in attempt.questions():
+            payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        attempt.refresh_from_db()
+        
+        self.assertEqual(attempt.raw_correct, 30)
+        self.assertEqual(attempt.scaled_score, settings.EXAM["SCALED_MAX"])
+        self.assertTrue(attempt.passed)
+
+    def test_previous_attempts_show_form_type(self):
+        """AC8: Previous attempts show which form was taken."""
+        # Create a short attempt
+        self.client.post("/begin/", {"candidate": "Short", "form": "short"}, follow=True)
+        short = Attempt.objects.latest("started_at")
+        self.client.post(f"/attempt/{short.id}/submit/", {"full_form": "1"})
+        
+        # Create a full attempt
+        self.client.post("/begin/", {"candidate": "Full", "form": "full"}, follow=True)
+        full = Attempt.objects.latest("started_at")
+        self.client.post(f"/attempt/{full.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.get("/")
+        # Check for form type indicators
+        self.assertContains(resp, "Short")
+        self.assertContains(resp, "Full")
+        # Should show item counts
+        self.assertContains(resp, "/30")
+        self.assertContains(resp, "/60")
+
+    def test_default_selection_is_full_exam(self):
+        """AC9: Default selection is Full exam."""
+        # When form parameter is missing, should default to full
+        resp = self.client.post("/begin/", {"candidate": "AK", "shuffle": "on"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.form_type, "full")
+        self.assertEqual(len(attempt.order), 60)
+        self.assertEqual(attempt.duration_minutes, 120)
+
+    def test_short_form_results_page_shows_30_items(self):
+        """AC6: Results page uses actual attempt length."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        payload = {"full_form": "1"}
+        for i, q in enumerate(attempt.questions()):
+            if i < 15:
+                payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        results = self.client.get(f"/attempt/{attempt.id}/results/")
+        
+        # Should show "15/30" not "15/60"
+        self.assertContains(results, "15")
+        self.assertContains(results, "30")
+
+    def test_short_form_review_uses_actual_length(self):
+        """AC6: Review page shows actual attempt length."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        review = self.client.get(f"/attempt/{attempt.id}/review/")
+        
+        self.assertEqual(resp.status_code, 200)
+        # Review should have 30 questions, not 60
+        rows = attempt.review_rows()
+        self.assertEqual(len(rows), 30)

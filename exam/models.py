@@ -53,10 +53,15 @@ class Question(models.Model):
 
 
 class Attempt(models.Model):
+    FULL = "full"
+    SHORT = "short"
+    FORM_CHOICES = [(FULL, "Full exam"), (SHORT, "Short practice")]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     candidate = models.CharField(max_length=120, blank=True)
     started_at = models.DateTimeField(default=timezone.now)
     submitted_at = models.DateTimeField(null=True, blank=True)
+    form_type = models.CharField(max_length=10, choices=FORM_CHOICES, default=FULL)
     duration_minutes = models.PositiveIntegerField(default=120)
     order = models.JSONField(default=list)  # list of Question.number, in delivery order
     answers = models.JSONField(default=dict)  # {"<question number>": ["A", "C"]} display letters

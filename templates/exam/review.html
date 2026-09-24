@@ -1,0 +1,72 @@
+{% extends "exam/base.html" %}
+{% block title %}Answer review &middot; {{ cfg.NAME }}{% endblock %}
+
+{% block extra_css %}
+.filters{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.filters a{font-size:13px;padding:6px 12px;border:1px solid var(--line);border-radius:20px;
+  text-decoration:none;color:var(--muted);background:var(--panel)}
+.filters a.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.q{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:22px;margin-bottom:16px}
+.q.wrong{border-left:3px solid var(--bad)} .q.right{border-left:3px solid var(--ok)}
+.q-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.q-num{font-weight:650;font-size:14px}
+.opt{display:flex;gap:11px;padding:10px 13px;border:1px solid var(--line);border-radius:8px;margin-bottom:6px;
+  background:var(--opt);align-items:flex-start;font-size:14px}
+.opt.correct{border-color:var(--ok-line);background:var(--ok-soft)}
+.opt.chosen-wrong{border-color:var(--bad-line);background:var(--bad-soft)}
+.opt .letter{font-weight:650;min-width:15px}
+.mark{margin-left:auto;font-size:11px;letter-spacing:.04em;text-transform:uppercase;white-space:nowrap;padding-left:10px}
+.mark.ok{color:var(--ok)} .mark.bad{color:var(--bad)}
+.why{margin-top:14px;padding:14px 16px;border-radius:8px;background:var(--why);border:1px solid var(--line);font-size:14px}
+.why strong{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:5px}
+{% endblock %}
+
+{% block content %}
+<div class="panel" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+  <div>
+    <h1 style="margin:0">Answer review</h1>
+    <p class="lede" style="margin:2px 0 0">
+      Scaled {{ attempt.scaled_score }} &middot; {{ attempt.raw_correct }}/{{ attempt.order|length }} correct &middot;
+      {{ wrong_count }} to work on
+    </p>
+  </div>
+  <span style="flex:1"></span>
+  <a class="btn ghost small" href="{% url 'results' attempt.id %}">Back to score report</a>
+</div>
+
+<div class="filters">
+  <a href="?" class="{% if only == 'all' %}on{% endif %}">All</a>
+  <a href="?only=wrong" class="{% if only == 'wrong' %}on{% endif %}">Incorrect</a>
+  <a href="?only=right" class="{% if only == 'right' %}on{% endif %}">Correct</a>
+  {% for key, d in cfg.DOMAINS.items %}
+  <a href="?only={{ key }}" class="{% if only == key %}on{% endif %}">{{ key }} &middot; {{ d.name }}</a>
+  {% endfor %}
+</div>
+
+{% for row in rows %}
+<section class="q {% if row.is_correct %}right{% else %}wrong{% endif %}">
+  <div class="q-head">
+    <span class="q-num">Question {{ row.index }}</span>
+    <span class="tag">{{ row.question.scenario }}</span>
+    <span class="tag">{{ row.question.domain }} &middot; {{ row.question.domain_name }}</span>
+    {% if row.question.qtype == "multi" %}<span class="tag multi">Select {{ row.question.select_count }}</span>{% endif %}
+    <span style="flex:1"></span>
+    {% if row.is_correct %}<span class="tag ok">Correct</span>
+    {% else %}<span class="tag bad">You chose {{ row.given_display }} &middot; answer {{ row.correct_display }}</span>{% endif %}
+  </div>
+  <p>{{ row.question.text }}</p>
+
+  {% for o in row.options %}
+  <div class="opt {% if o.is_correct %}correct{% elif o.chosen %}chosen-wrong{% endif %}">
+    <span class="letter">{{ o.letter }}.</span><span>{{ o.text }}</span>
+    {% if o.is_correct %}<span class="mark ok">correct{% if o.chosen %} &middot; your answer{% endif %}</span>
+    {% elif o.chosen %}<span class="mark bad">your answer</span>{% endif %}
+  </div>
+  {% endfor %}
+
+  <div class="why"><strong>Why</strong>{{ row.explanation }}</div>
+</section>
+{% empty %}
+<div class="panel">Nothing matches this filter.</div>
+{% endfor %}
+{% endblock %}

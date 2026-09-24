@@ -1,0 +1,94 @@
+{% extends "exam/base.html" %}
+{% block title %}Score report &middot; {{ cfg.NAME }}{% endblock %}
+
+{% block extra_css %}
+.verdict{display:flex;gap:28px;align-items:center;flex-wrap:wrap}
+.score{font-size:64px;font-weight:660;letter-spacing:-.03em;line-height:1;font-variant-numeric:tabular-nums}
+.score.pass{color:var(--ok)} .score.fail{color:var(--bad)}
+.verdict-label{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted)}
+.scale{position:relative;height:34px;margin:26px 0 8px}
+.scale .track{position:absolute;top:13px;left:0;right:0;height:8px;border-radius:5px;
+  background:var(--scale-track)}
+.scale .cut{position:absolute;top:5px;width:2px;height:24px;background:var(--ink);opacity:.5}
+.scale .cut span{position:absolute;top:26px;left:-16px;font-size:11px;color:var(--muted);white-space:nowrap}
+.scale .pin{position:absolute;top:2px;width:14px;height:14px;border-radius:50%;border:3px solid var(--panel);
+  transform:translateX(-7px);box-shadow:0 1px 4px rgba(0,0,0,.25)}
+.scale .pin.pass{background:var(--ok)} .scale .pin.fail{background:var(--bad)}
+.scale .ends{position:absolute;top:26px;left:0;right:0;display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-top:26px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:13px 15px;background:var(--stat)}
+.stat b{display:block;font-size:22px;font-weight:640;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.stat span{font-size:12px;color:var(--muted)}
+.bar{height:7px;border-radius:4px;background:var(--bar);overflow:hidden;min-width:90px}
+.bar i{display:block;height:100%;border-radius:4px;background:var(--accent)}
+.bar i.good{background:var(--ok)} .bar i.weak{background:var(--bad)}
+{% endblock %}
+
+{% block content %}
+<div class="panel">
+  <h1>Score report</h1>
+  <p class="lede">
+    {{ cfg.NAME }} &middot; {{ attempt.submitted_at|date:"j F Y, H:i" }}
+    {% if attempt.candidate %} &middot; {{ attempt.candidate }}{% endif %}
+    {% if attempt.auto_submitted %} &middot; <span class="tag">auto-submitted at time expiry</span>{% endif %}
+  </p>
+
+  <div class="verdict">
+    <div>
+      <div class="verdict-label">Scaled score</div>
+      <div class="score {% if attempt.passed %}pass{% else %}fail{% endif %}">{{ attempt.scaled_score }}</div>
+    </div>
+    <div>
+      <div class="verdict-label">Result</div>
+      <div style="font-size:26px;font-weight:600;color:{% if attempt.passed %}var(--ok){% else %}var(--bad){% endif %}">
+        {% if attempt.passed %}Pass{% else %}Fail{% endif %}
+      </div>
+      <div style="font-size:13px;color:var(--muted)">cut score {{ cfg.CUT_SCORE }}</div>
+    </div>
+  </div>
+
+  <div class="scale">
+    <div class="track"></div>
+    <div class="cut" style="left:{{ cut_pos }}%"><span>{{ cfg.CUT_SCORE }} cut</span></div>
+    <div class="pin {% if attempt.passed %}pass{% else %}fail{% endif %}" style="left:{{ score_pos }}%"></div>
+    <div class="ends"><span>{{ cfg.SCALED_MIN }}</span><span>{{ cfg.SCALED_MAX }}</span></div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><b>{{ attempt.raw_correct }}/{{ total }}</b><span>Items correct</span></div>
+    <div class="stat"><b>{{ percent }}%</b><span>Raw percentage</span></div>
+    <div class="stat"><b>{{ unanswered }}</b><span>Left unanswered</span></div>
+    <div class="stat"><b>{{ attempt.time_used_display }}</b><span>Time used of {{ cfg.DURATION_MINUTES }}m</span></div>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Performance by content domain</h2>
+  <p class="lede" style="margin-bottom:14px">
+    Domain percentages are diagnostic only &mdash; the pass decision rests on the total scaled score.
+  </p>
+  <table>
+    <tr><th>Domain</th><th class="num">Weight</th><th class="num">Correct</th><th class="num">%</th><th style="width:150px"></th></tr>
+    {% for r in rows %}
+    <tr>
+      <td><strong>{{ r.key }}</strong>&nbsp; {{ r.name }}</td>
+      <td class="num">{{ r.weight }}%</td>
+      <td class="num">{{ r.correct }}/{{ r.total }}</td>
+      <td class="num">{{ r.percent }}%</td>
+      <td><div class="bar"><i class="{% if r.percent >= 80 %}good{% elif r.percent < 60 %}weak{% endif %}" style="width:{{ r.percent }}%"></i></div></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="panel" style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+  <a class="btn" href="{% url 'review' attempt.id %}">Review all {{ total }} answers</a>
+  <a class="btn ghost" href="{% url 'review' attempt.id %}?only=wrong">Review only what I got wrong</a>
+  <a class="btn ghost" href="{% url 'start' %}">Take it again</a>
+  <form class="inline-form" method="post" action="{% url 'delete_attempt' attempt.id %}"
+        onsubmit="return confirm('Delete this result permanently?');">
+    {% csrf_token %}
+    <button class="btn ghost danger" type="submit">Delete this result</button>
+  </form>
+</div>
+{% endblock %}

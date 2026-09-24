@@ -1,0 +1,1030 @@
+[
+ {
+  "id": 1,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your loop is implemented correctly against stop_reason. On some complex disputes the model returns end_turn with text like \"I'll need to look into this further and get back to you,\" having resolved nothing. The loop terminates as designed. What is the right diagnosis?",
+  "options": {
+   "A": "The loop is behaving correctly; the defect is upstream — the agent decided it was finished when it was not, which is a prompt, tool, or escalation-criteria problem rather than a control-flow problem.",
+   "B": "The loop should ignore end_turn when no resolution tool has been called, and continue iterating until one has.",
+   "C": "The loop should inspect the final text for phrases like \"get back to you\" and continue when it finds them.",
+   "D": "stop_reason is unreliable for multi-step workflows and the loop should be driven by a turn counter instead."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "end_turn faithfully reports that the model considers itself finished; if it finishes prematurely, the fix belongs in prompt design, tool availability, or escalation criteria. B and C reintroduce heuristic overrides of the structured signal — the exact anti-pattern. D discards the correct mechanism because of an unrelated defect."
+ },
+ {
+  "id": 2,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D1",
+  "type": "multi",
+  "question": "Which TWO statements about the agentic loop are correct? (Select 2.)",
+  "options": {
+   "A": "Tool results must be added to the conversation between iterations so the model can incorporate new information into its next decision.",
+   "B": "The model decides which tool to call next by reasoning over the accumulated context, rather than following a sequence fixed in advance.",
+   "C": "The loop should terminate as soon as the model produces any text content alongside its tool calls.",
+   "D": "Once the loop has executed a tool, the model's subsequent turns are constrained to tools from the same category."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "Appending tool results between iterations and letting the model choose the next action from context are the two defining properties of the loop. C is the anti-pattern of treating assistant text as a completion signal — models routinely emit text alongside tool_use. D describes a constraint that does not exist."
+ },
+ {
+  "id": 3,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your get_customer tool returns the full customer record, including national ID number and full payment instrument details, none of which the agent needs. Legal wants this data never to enter the model's context. What is the appropriate mechanism?",
+  "options": {
+   "A": "A PostToolUse hook that strips those fields from the tool result before the model processes it.",
+   "B": "A system prompt instruction telling the agent never to read or repeat those fields.",
+   "C": "A review step that redacts the agent's outgoing messages before they reach the customer.",
+   "D": "An output schema on the agent's final response that excludes sensitive fields."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "PostToolUse hooks intercept and transform tool results before the model sees them, which is the only option here that keeps the data out of context entirely. B lets the data in and asks the model not to use it. C and D both operate after the data has already been in context, which is precisely what legal ruled out."
+ },
+ {
+  "id": 4,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D1",
+  "type": "single",
+  "question": "A customer asks to cancel an order. The agent calls get_customer and lookup_order successfully, then discovers the order has already shipped and the case needs a human. What should the handoff include that a transcript alone does not?",
+  "options": {
+   "A": "The verified customer ID, the order's current state, the tools already called and what they returned, and a recommended action for the human.",
+   "B": "A flag indicating that the agent failed to resolve the case, so the queue can prioritize it.",
+   "C": "The customer's original message verbatim, so the human forms an unbiased impression.",
+   "D": "A confidence score for the agent's assessment, so the human knows how much to trust it."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "A structured mid-process handoff carries identity, state, the work already done, and a recommendation, so the human does not repeat the investigation. B routes without informing. C discards everything the agent learned. D offers a poorly-calibrated number in place of the facts the human actually needs."
+ },
+ {
+  "id": 5,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D1",
+  "type": "single",
+  "question": "You need process_refund to run only after both get_customer and check_return_eligibility have succeeded. A colleague proposes using tool_choice to force the order. Why is a prerequisite gate the better mechanism here?",
+  "options": {
+   "A": "tool_choice constrains what the model may call on a given request but cannot express a dependency on what has already succeeded across the conversation; a gate can block the call until the prerequisites are satisfied.",
+   "B": "tool_choice cannot be changed between turns, so the sequence would be fixed for the whole session.",
+   "C": "tool_choice applies only to the first tool call in a session and is ignored thereafter.",
+   "D": "tool_choice and prerequisite gates are equivalent; the gate is simply easier to log."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Forced tool selection is a per-request constraint on what may be called, not a stateful check on what has already completed. Enforcing a multi-step prerequisite requires programmatic gating in your own code path. B and C describe restrictions that do not exist. D understates a real difference in what the two mechanisms can express."
+ },
+ {
+  "id": 6,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your AgentDefinitions all carry the same description: \"A specialized research subagent.\" The coordinator frequently sends document-analysis work to the web search subagent. What should change?",
+  "options": {
+   "A": "Write a distinct description per subagent stating what it does, what inputs it expects, and when to choose it over the others.",
+   "B": "Rename the subagents so their names alone convey their specialization.",
+   "C": "Have the coordinator invoke every subagent for every task and discard the irrelevant outputs.",
+   "D": "Move the specialization details into each subagent's own system prompt so it can decline work outside its scope."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "The coordinator selects subagents from their descriptions, so identical descriptions leave it nothing to discriminate on. B helps marginally but a name cannot convey inputs and boundaries. C wastes work and pollutes results. D lets the misrouting happen and then rejects it, costing a full round trip each time."
+ },
+ {
+  "id": 7,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D1",
+  "type": "single",
+  "question": "You intended search and analysis to run in parallel and wrote a coordinator prompt asking it to \"run both subagents at the same time.\" Traces show two Task calls, but in consecutive assistant turns, and total latency is unchanged. What is happening?",
+  "options": {
+   "A": "Parallelism requires both Task calls to be emitted in a single assistant response; calls made across separate turns are inherently sequential.",
+   "B": "The two subagents are competing for the same rate limit, so parallel execution provides no benefit.",
+   "C": "The coordinator is correctly parallel, but latency is dominated by the synthesis stage that follows.",
+   "D": "Task calls are always executed serially by the runtime regardless of how they are emitted."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Parallel subagent execution comes from emitting multiple Task tool calls within one coordinator response. Split across turns, the second call cannot begin until the first turn's results have returned. B and C are unsupported by the trace described. D would make parallel execution impossible, which is not the case."
+ },
+ {
+  "id": 8,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your coordinator's refinement loop re-delegates whenever synthesis output mentions any uncertainty. On some topics it has run eleven cycles without converging, because genuine scientific uncertainty never resolves. What is the fix?",
+  "options": {
+   "A": "Evaluate synthesis against explicit coverage criteria — which subtopics and source types must be represented — and stop when those are met, rather than looping until no uncertainty remains.",
+   "B": "Cap the refinement loop at three cycles and accept whatever synthesis produces at that point.",
+   "C": "Instruct the synthesis agent not to mention uncertainty in its output.",
+   "D": "Move the refinement decision to the synthesis agent, which knows best whether its own output is complete."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "The loop needs a coverage-based termination criterion; unresolved uncertainty in the subject matter is a finding to report, not a gap to research away. B is a blunt backstop worth having but does not fix the wrong criterion. C hides real uncertainty from the reader. D asks the agent that produced the output to judge its own completeness, which is the self-review weakness."
+ },
+ {
+  "id": 9,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D1",
+  "type": "multi",
+  "question": "Your coordinator must delegate a synthesis task to a subagent that has never run before in this session. Which TWO items must appear in the subagent's prompt for it to work? (Select 2.)",
+  "options": {
+   "A": "The complete findings from the search and analysis stages that synthesis is meant to combine.",
+   "B": "The source metadata attached to those findings, so attribution survives into the synthesized output.",
+   "C": "The coordinator's session identifier, so the subagent can retrieve the prior conversation.",
+   "D": "A directive to load the previous subagents' outputs from shared agent memory."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "Everything a subagent needs must be in its prompt: the findings themselves and the metadata that preserves attribution. C and D both assume retrieval mechanisms that do not exist — subagents neither inherit parent context nor share memory across invocations."
+ },
+ {
+  "id": 10,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D1",
+  "type": "single",
+  "question": "A user asks for a report on \"AI in healthcare.\" The coordinator spawns eleven subagents covering clinical decision support, imaging, drug discovery, billing automation, triage, documentation, genomics, and four more. Total cost is high and the report is a shallow survey. What is the underlying problem?",
+  "options": {
+   "A": "Decomposition breadth should be driven by the query's actual scope and the depth the user needs, not maximized; the coordinator should scope subtopics to what the report must cover in depth.",
+   "B": "Eleven subagents is correct for a broad topic; the problem is that synthesis compressed them too aggressively.",
+   "C": "The subagents were not given enough tools to research their subtopics thoroughly.",
+   "D": "The coordinator should have run the eleven subagents sequentially so each could build on the last."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Decomposition is a judgment about scope and depth, not a quantity to maximize — too narrow causes coverage gaps, too broad spreads the budget so thin that nothing is covered properly. B and C blame downstream stages for an upstream scoping decision. D would multiply latency without changing the breadth problem."
+ },
+ {
+  "id": 11,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D1",
+  "type": "single",
+  "question": "You are asked to produce API documentation for a 30-module service, where each module needs accurate local documentation and the overview must correctly describe how modules interact. Which decomposition fits?",
+  "options": {
+   "A": "A per-module documentation pass followed by a separate cross-module pass that describes interactions, rather than one pass over everything.",
+   "B": "A single pass over all 30 modules, so the model sees every interaction while documenting each module.",
+   "C": "Dynamic decomposition, letting the model decide module by module what deserves documentation.",
+   "D": "Thirty independent parallel subagents with no integration pass, since each module documents itself."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Local depth plus a dedicated integration pass is the same chained structure that works for large reviews, and for the same reason: one pass over 30 modules dilutes attention and produces uneven depth. C treats a predictable task as open-ended. D produces 30 documents with no coherent account of how the system fits together."
+ },
+ {
+  "id": 12,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D1",
+  "type": "single",
+  "question": "You ask your agent to audit an unfamiliar service for authentication weaknesses. It does not know where auth is enforced, which routes are public, or whether there is a middleware layer. Which approach fits, and what does the first step look like?",
+  "options": {
+   "A": "Dynamic decomposition: map how requests reach handlers and where auth is enforced, then generate the specific checks that structure implies.",
+   "B": "Prompt chaining: run a fixed checklist of the OWASP Top Ten against every file in the repository.",
+   "C": "Read every file first, then reason about all of it at once with the full picture in context.",
+   "D": "Spawn one subagent per file, each reporting any authentication concern it notices locally."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "An audit of an unfamiliar system is open-ended: the meaningful checks depend on the architecture, which must be discovered first. B applies generic checks without knowing where they are relevant, producing noise. C exhausts context. D loses every cross-file property, which is where auth bypasses usually live."
+ },
+ {
+  "id": 13,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your investigation spans four working days, with different questions each day about the same service. Nothing in the code changes during that period. What session strategy fits?",
+  "options": {
+   "A": "Use a named session and --resume each day, so accumulated understanding carries forward without re-exploration.",
+   "B": "Start a fresh session daily and re-explore, to avoid any risk of stale context.",
+   "C": "Fork the session each morning so each day's questions are explored independently.",
+   "D": "Keep one session open continuously across the four days without resuming."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Named session resumption is designed for continuing a specific investigation across work sessions when prior context is still valid — which it is here, since the code has not changed. B discards valid analysis daily. C branches when there is nothing divergent to explore. D is not a session strategy and does not survive interruption."
+ },
+ {
+  "id": 14,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your compliance hook blocks a $900 refund. The agent then tells the customer \"the refund system returned an error, please try again later.\" What is missing from the design?",
+  "options": {
+   "A": "The hook should redirect into the escalation workflow with the reason, so the agent explains that supervisor approval is required rather than reporting a system fault.",
+   "B": "The hook should allow the refund and log it for supervisor review afterwards.",
+   "C": "The system prompt should instruct the agent never to mention errors to customers.",
+   "D": "The hook should return no response at all, so the agent moves on to another approach."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Blocking is only half the pattern; the hook must also redirect to the alternative workflow with enough context that the agent communicates accurately. B defeats the control. C suppresses the symptom while the agent still has no idea what happened. D leaves the agent guessing, which produces exactly this kind of invented explanation."
+ },
+ {
+  "id": 15,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D1",
+  "type": "single",
+  "question": "You want to compare how a migration behaves under two different dependency-resolution strategies. Both must start from the same completed dependency map, and you want to be able to return to either branch later. Which mechanism, and why not the alternative?",
+  "options": {
+   "A": "fork_session, because it creates independent branches from a shared baseline; --resume would replay a single linear history, so the branches could not stay independent.",
+   "B": "--resume, because named sessions can be resumed repeatedly and each resume is independent of the others.",
+   "C": "/compact between the two explorations, which clears the first branch and leaves the baseline intact.",
+   "D": "Two fresh sessions with the dependency map pasted in, because forking does not preserve tool results."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Forking is the mechanism for divergent exploration from a shared analysis baseline. B is wrong on the key point: resuming the same session twice produces one linear history where the first exploration is in context for the second. C compacts indiscriminately rather than branching. D asserts a limitation of forking that does not hold."
+ },
+ {
+  "id": 16,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D1",
+  "type": "single",
+  "question": "Your report generator subagent occasionally fabricates a citation when a finding reaches it without a source. You want a guarantee, not an improvement. What is the correct control?",
+  "options": {
+   "A": "A programmatic check that blocks report generation until every finding carries a source, rather than instructing the generator to cite carefully.",
+   "B": "A system prompt rule stating that every claim in the report must carry a citation.",
+   "C": "Few-shot examples in the generator's prompt showing properly cited reports.",
+   "D": "A post-generation pass asking the model to verify its own citations."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "When the requirement is a guarantee, enforcement has to be programmatic — gate the downstream step on the prerequisite being satisfied. B and C both improve a probabilistic process. D asks the model that fabricated the citation to catch itself, in the same context that produced it."
+ },
+ {
+  "id": 17,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D2",
+  "type": "single",
+  "question": "Your lookup_order description reads: \"Retrieves order details. Accepts an order ID.\" The agent calls it correctly for well-formed IDs but fails when customers give an email plus a purchase date, or an order number with the store prefix included. What is missing from the description?",
+  "options": {
+   "A": "The input formats it accepts, example queries covering the common variants, the edge cases it handles, and what to do when the identifier is not an order ID.",
+   "B": "A stricter statement that only canonical order IDs are accepted, so the agent stops trying variants.",
+   "C": "A note that the tool is slow, so the agent calls it only when confident.",
+   "D": "The exact JSON shape of the response, so the agent can parse it reliably."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Tool descriptions should state accepted input formats, example queries, edge cases, and boundaries — that is what lets the model handle real-world input variation. B narrows the tool without telling the agent what to do instead. C addresses cost, not selection or input handling. D helps parsing but the failure described is at the call site, not the response."
+ },
+ {
+  "id": 18,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D2",
+  "type": "single",
+  "question": "You are deciding what to expose over MCP for a research corpus: a browsable index of the 4,000 documents available, and the ability to run a full-text query. Which mapping is correct?",
+  "options": {
+   "A": "The index is a resource, because it is a content catalog the agent should be able to see; the query is a tool, because it is an action the agent invokes.",
+   "B": "Both should be tools, since the agent needs to call something in each case.",
+   "C": "Both should be resources, since both ultimately return document content.",
+   "D": "The index should be a tool that returns the catalog, and the query should be a resource parameterized by search terms."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Resources expose content catalogs so the agent can see what exists without exploratory calls; tools perform actions. B forces the agent to spend a call discovering what is available. C misuses resources for an operation with parameters and side effects. D inverts both roles."
+ },
+ {
+  "id": 19,
+  "scenario": "Structured Data Extraction",
+  "domain": "D2",
+  "type": "multi",
+  "question": "Your extraction tool receives a request with a malformed date range where the end precedes the start. Which TWO properties should the error response have? (Select 2.)",
+  "options": {
+   "A": "An errorCategory of validation, distinguishing it from transient and permission failures.",
+   "B": "A message naming the specific field and constraint violated, so the agent can correct the call.",
+   "C": "isRetryable: true, since re-sending the request is how the agent will discover the correct format.",
+   "D": "A generic \"Invalid request\" message, to avoid exposing internal schema details to the agent."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "A validation error should be categorized as such and name what was wrong, so the agent can fix the input rather than guess. C is wrong as stated: retrying the identical malformed call cannot succeed — the agent must change the argument first. D withholds exactly the information needed for recovery."
+ },
+ {
+  "id": 20,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D2",
+  "type": "single",
+  "question": "Your agent has 4 tools and selects correctly. Product proposes adding 14 more so it can also handle subscriptions, shipping claims, and loyalty. What should you expect, and what is the mitigation?",
+  "options": {
+   "A": "Selection reliability degrades as decision complexity grows; scope each agent to the tools its role needs and split the other capabilities across specialized agents.",
+   "B": "No degradation, provided each of the 18 tools has a well-written description.",
+   "C": "Degradation only in latency, not accuracy, since more tool definitions mean a longer prompt.",
+   "D": "Degradation that can be offset by setting tool_choice to \"any\" so the model always commits to a tool."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Giving one agent a large tool set degrades selection reliability by increasing decision complexity; the remedy is scoped access per role. B overstates what good descriptions can compensate for. C is wrong about the nature of the cost. D forces a call without improving which call is chosen."
+ },
+ {
+  "id": 21,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D2",
+  "type": "single",
+  "question": "Your document subagent needs to check a single figure against a web source roughly once per run — not enough to justify the full web-search specialization, but frequent enough that routing through the coordinator each time hurts. What is the appropriate design?",
+  "options": {
+   "A": "Give it a narrowly scoped verification tool for that specific need, and continue routing anything broader through the coordinator.",
+   "B": "Give it the full web search tool set, since it clearly needs web access.",
+   "C": "Have it defer all verifications to the end and return them as a batch to the coordinator.",
+   "D": "Have the coordinator pre-fetch likely verification sources before invoking the document subagent."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "A limited cross-role tool for a specific high-frequency need, with complex cases still routed through the coordinator, is the designed balance. B over-provisions and invites out-of-specialization misuse. C creates blocking dependencies when later analysis depends on an earlier verification. D relies on predicting what will need checking."
+ },
+ {
+  "id": 22,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D2",
+  "type": "single",
+  "question": "An engineer asks the agent to find where a config value is consumed. The agent needs to search for the constant name across a large TypeScript codebase, then follow the imports in the handful of files that reference it. What is the efficient sequence?",
+  "options": {
+   "A": "Grep for the constant to find entry points, then Read only those files and follow their imports from there.",
+   "B": "Glob for all TypeScript files, then Read each one and note where the constant appears.",
+   "C": "Read the project's index files first to build a mental model, then Grep within that subset.",
+   "D": "Grep for the constant, then Grep again for every file's contents to reconstruct the import graph."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Building codebase understanding incrementally — Grep to find entry points, then Read to follow imports and trace flows — avoids loading files that are irrelevant. B is the read-everything anti-pattern. C reads before knowing what matters. D re-searches the whole codebase where reading a few files would answer the question."
+ },
+ {
+  "id": 23,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D2",
+  "type": "single",
+  "question": "An engineer wants to know every place a wrapper module's functions are used. The wrapper re-exports fifteen functions under new names. What approach finds all usages?",
+  "options": {
+   "A": "First identify every name the wrapper exports, then search the codebase for each of those names.",
+   "B": "Search for the wrapper module's file path, since every usage must import from it.",
+   "C": "Glob for files in the same directory as the wrapper, since related code is usually co-located.",
+   "D": "Read the wrapper file and reason about which call sites are likely, based on the function names."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Tracing usage across a wrapper requires enumerating the exported names first, then searching for each — the renaming is exactly what breaks a naive single search. B finds imports but misses re-exports through intermediate barrels and tells you nothing about which function is used. C assumes co-location. D substitutes guesswork for search."
+ },
+ {
+  "id": 24,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D2",
+  "type": "single",
+  "question": "Your team's MCP server exposes a tool that both reads and writes Jira issues depending on an 'operation' argument. Reviewers report the agent occasionally writes when it meant to read. What is the cleanest remedy?",
+  "options": {
+   "A": "Split it into separate read and write tools with distinct descriptions, so a read intent cannot be expressed as a write call.",
+   "B": "Add a confirmation argument the agent must set to true before any write takes effect.",
+   "C": "Add a system prompt rule requiring the agent to state its intent before calling the tool.",
+   "D": "Keep the combined tool but default the operation argument to read."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Splitting a tool that spans distinct intents into purpose-specific tools with their own contracts removes the failure mode structurally — the agent can no longer express a read as a write. B, C and D all keep a single call path where one wrong argument causes a mutation, and rely on the model getting that argument right."
+ },
+ {
+  "id": 25,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D2",
+  "type": "multi",
+  "question": "You are documenting an MCP tool that returns a repository's dependency graph. Which TWO description elements most improve the agent's willingness and ability to use it correctly? (Select 2.)",
+  "options": {
+   "A": "A description of what the output contains and its structure, so the agent knows what it will get back.",
+   "B": "An explicit statement of what this tool does that the built-in search tools cannot.",
+   "C": "The average response time, so the agent can budget its calls.",
+   "D": "The name of the internal team that maintains the server."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "Explaining capabilities and output in detail, and distinguishing the tool from alternatives the agent might otherwise default to, are what drive correct adoption over built-in tools. C is operational trivia the agent cannot act on meaningfully. D is irrelevant to selection."
+ },
+ {
+  "id": 26,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D2",
+  "type": "single",
+  "question": "A tool call returns successfully with an empty array: the customer genuinely has no orders in the last 90 days. Your implementation sets isError: true because \"no results\" felt like a failure. What goes wrong?",
+  "options": {
+   "A": "The agent treats a factual answer as a system failure, so it retries or escalates instead of telling the customer they have no recent orders.",
+   "B": "Nothing significant — the agent will inspect the empty array and infer the correct meaning regardless of the flag.",
+   "C": "The agent will report the empty result to the customer but log it as an incident, inflating error metrics only.",
+   "D": "The agent will retry once and then correctly proceed, so the only cost is one extra call."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "The isError flag is how a tool tells the agent whether the call itself failed; marking a valid empty result as an error causes wasted recovery attempts and prevents the agent from simply reporting the true answer. B assumes the agent overrides an explicit signal. C and D understate a behavioural failure as a metrics or cost issue."
+ },
+ {
+  "id": 27,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D2",
+  "type": "single",
+  "question": "Your search subagent cannot reach one of five sources after local retries. What should it return to the coordinator?",
+  "options": {
+   "A": "A structured error naming the failure type, the query attempted, the partial results from the four sources that did respond, and any alternative source it can suggest.",
+   "B": "A failure status for the whole search step, so the coordinator knows the stage did not complete.",
+   "C": "Only the four successful results, since the coordinator can only act on what was retrieved.",
+   "D": "The four successful results plus a note appended to the end of the findings text."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Structured error context — failure type, what was attempted, partial results, possible alternatives — is what lets the coordinator decide between retrying, substituting a source, or proceeding with annotated gaps. B discards four usable results. C silently hides the gap, so the final report overstates its coverage. D conveys the fact but not in a form the coordinator can act on programmatically."
+ },
+ {
+  "id": 28,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "Your repo has a root CLAUDE.md with general standards, and services/payments/CLAUDE.md with payment-specific rules. An engineer editing a file in services/payments reports that both sets apply. Is this correct?",
+  "options": {
+   "A": "Yes — the configuration hierarchy composes, so project-level and directory-level instructions both apply when working in that directory.",
+   "B": "No — the directory-level file replaces the project-level file entirely for work in that subtree.",
+   "C": "No — only the file closest to the edited file is loaded, and the root file is ignored below any directory that has its own.",
+   "D": "Yes, but only because the directory file does not contradict the root file; a conflict would disable both."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "The hierarchy — user, project, and directory level — composes rather than replacing, which is what lets general standards coexist with local ones. B and C describe an override model that would make every subdirectory re-declare the shared standards. D invents a conflict-resolution rule that does not exist."
+ },
+ {
+  "id": 29,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "You have two candidate homes for a set of conventions: a CLAUDE.md inside services/payments/, or a .claude/rules/ file scoped with paths globs. The conventions apply to everything in that one directory and nowhere else. Which is the better fit, and what would change your answer?",
+  "options": {
+   "A": "Either works here because the scope aligns with a directory; the path-scoped rule becomes clearly better once the conventions apply to files spread across several directories.",
+   "B": "The path-scoped rule is always better, because directory-level CLAUDE.md files are deprecated in favour of .claude/rules/.",
+   "C": "The directory CLAUDE.md is always better, because rules files load only on exact filename matches rather than directory prefixes.",
+   "D": "Neither; conventions of this kind belong in a skill so they can be invoked when relevant."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "When the scope happens to be a single directory, both mechanisms express it; the advantage of glob-pattern rules appears when conventions must follow a file type across many directories, which directory-bound files cannot do. B invents a deprecation. C misstates how path globs work. D turns always-on conventions into manual invocation."
+ },
+ {
+  "id": 30,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "You wrote a /release-notes command for your own use and put it in ~/.claude/commands/. A teammate asks why it does not appear for them. What is the explanation and the fix?",
+  "options": {
+   "A": "User-scoped commands are personal and not distributed; move it to .claude/commands/ in the repository and commit it.",
+   "B": "The teammate needs to run a sync command to refresh their available slash commands.",
+   "C": "Commands in the home directory are cached per-project and only appear after the project has been opened twice.",
+   "D": "The command name conflicts with a built-in and must be renamed before it becomes visible to others."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Commands in ~/.claude/commands/ are personal; project-scoped commands live in .claude/commands/ and reach the team through version control. B, C and D all invent mechanisms rather than addressing the scope of where the file was placed."
+ },
+ {
+  "id": 31,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "multi",
+  "question": "You are deciding whether a body of guidance belongs in CLAUDE.md or in a skill. Which TWO statements correctly describe the distinction? (Select 2.)",
+  "options": {
+   "A": "CLAUDE.md suits universal standards that should apply to every task without being requested.",
+   "B": "Skills suit task-specific workflows that are invoked on demand when that task comes up.",
+   "C": "Skills are preferable for universal standards because they cost no context until invoked.",
+   "D": "CLAUDE.md is preferable for verbose procedural workflows because it guarantees they are always available."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "The split is always-loaded universal standards versus on-demand task-specific workflows. C would make a universal rule depend on someone remembering to invoke it. D loads a long procedure into every session, including the many where it is irrelevant."
+ },
+ {
+  "id": 32,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "Your team is choosing between two message-queue integrations. One requires standing up a new broker; the other reuses existing infrastructure but constrains the delivery semantics. Either affects roughly 20 files. What is the right approach?",
+  "options": {
+   "A": "Plan mode, because the task has multiple valid approaches with architectural and infrastructure consequences that should be explored before any code is written.",
+   "B": "Direct execution on the simpler option, reverting if the constraints prove unacceptable.",
+   "C": "Direct execution on both in parallel branches, then compare the working implementations.",
+   "D": "Plan mode only for the infrastructure question, then direct execution for both implementations to compare them empirically."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Multiple valid approaches, architectural decisions, and infrastructure implications are the conditions plan mode is designed for. B commits before comparing. C builds two full implementations to answer a question that exploration can settle far more cheaply. D still ends up implementing both."
+ },
+ {
+  "id": 33,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "You are in plan mode investigating a large refactor. The discovery phase produces enormous output — directory listings, file contents, dependency traces — and you are running low on context before the plan is finished. What should you do?",
+  "options": {
+   "A": "Delegate the verbose discovery to the Explore subagent, which isolates that output and returns summaries to the main conversation.",
+   "B": "Leave plan mode, run the discovery in direct execution, then return to plan mode with the findings.",
+   "C": "Continue and rely on the model to compress its own understanding as context fills.",
+   "D": "Split the refactor into smaller refactors so no single plan requires this much discovery."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "The Explore subagent exists to isolate verbose discovery output and return summaries, preserving the main conversation's context during multi-phase work. B does the same reading in the same context. C is how context exhaustion happens. D changes the task to avoid the tooling problem."
+ },
+ {
+  "id": 34,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "A colleague argues that plan mode should be used for every change, since reviewing a plan is always safer than reviewing a diff. What is the strongest counter-argument?",
+  "options": {
+   "A": "Plan mode earns its overhead when there are architectural decisions or multiple valid approaches; for a well-scoped change with a clear diagnosis it adds a review cycle without reducing risk.",
+   "B": "Plan mode cannot be used for single-file changes, so the policy is unenforceable.",
+   "C": "Plans are less reviewable than diffs, because they describe intent rather than actual code.",
+   "D": "Plan mode consumes more context than direct execution, so it should be reserved for small tasks."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "The criterion is complexity and the presence of genuine decisions, not a blanket policy — direct execution is appropriate for simple, well-understood changes. B is false. C overstates the case; plans are reviewable, just not always necessary. D inverts the cost argument."
+ },
+ {
+  "id": 35,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "You need a parser rewritten and you know exactly how it should behave, including edge cases and a performance ceiling. Which iterative technique gives the tightest feedback loop?",
+  "options": {
+   "A": "Write the test suite first covering behaviour, edge cases, and the performance requirement, then iterate by sharing failing tests.",
+   "B": "Use the interview pattern to surface considerations before implementation begins.",
+   "C": "Provide a prose specification and review the implementation against it manually.",
+   "D": "Implement first and add tests afterwards to characterize whatever behaviour emerged."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Test-driven iteration is the right technique when you already know the expected behaviour: tests encode it precisely and failures give specific, actionable feedback each cycle. B is for unfamiliar domains where you do not yet know what to specify. C reintroduces the ambiguity of prose. D produces tests that ratify whatever was built, including its bugs."
+ },
+ {
+  "id": 36,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D3",
+  "type": "single",
+  "question": "Your CI step runs with -p and prints a well-written prose review to stdout. The bot that posts PR comments must parse file, line, severity, and message out of that text with regular expressions, and breaks whenever the wording shifts. What is the correct fix?",
+  "options": {
+   "A": "Request structured output with --output-format json and --json-schema, so the bot consumes fields rather than parsing prose.",
+   "B": "Pin the review prompt so the wording never changes, keeping the existing parser stable.",
+   "C": "Have the bot send the prose to a second Claude call that extracts the fields.",
+   "D": "Post the prose review as a single PR comment and let developers locate the referenced lines themselves."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Structured, schema-conformant output is what makes findings machine-parseable for automated posting. B depends on output wording being stable, which it is not. C adds a model call and a new failure mode to recover structure that could have been requested directly. D abandons inline comments, which is the feature."
+ },
+ {
+  "id": 37,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D3",
+  "type": "single",
+  "question": "Your CI-invoked reviews flag violations of conventions your team abandoned a year ago, and miss the conventions you adopted since. The prompt itself is generic and unchanged. Where does the project context belong?",
+  "options": {
+   "A": "In CLAUDE.md, which is the mechanism for supplying project context — standards, conventions, review criteria — to CI-invoked Claude Code.",
+   "B": "In the CI job's prompt string, expanded from a template file at pipeline run time.",
+   "C": "In a fine-tuned model trained on the team's merged pull requests.",
+   "D": "In the repository's contributing guide, which Claude reads automatically from the project root."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "CLAUDE.md is where project context reaches CI-invoked Claude Code, and it lives in the repo so it evolves with the conventions. B works but scatters the standards into pipeline configuration where the team will not maintain them. C is out of scope and far heavier than the problem. D assumes automatic discovery of an arbitrary file."
+ },
+ {
+  "id": 38,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D3",
+  "type": "single",
+  "question": "Your CI test-generation step proposes tests that duplicate scenarios already covered in the repository's existing suite, wasting reviewer time. What is the direct fix?",
+  "options": {
+   "A": "Include the existing test files in the request context so generation can avoid scenarios already covered.",
+   "B": "Ask the model to generate twice as many tests and deduplicate the output afterwards.",
+   "C": "Run generation only on files that currently have no test file at all.",
+   "D": "Instruct the model in the prompt to avoid writing duplicate tests."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Providing the existing tests in context is what allows the model to see what is already covered. B increases the volume to filter. C skips partially-tested files, which is where coverage gaps usually are. D instructs the model to avoid duplicating tests it cannot see."
+ },
+ {
+  "id": 39,
+  "scenario": "Code Generation with Claude Code",
+  "domain": "D3",
+  "type": "single",
+  "question": "Your migration script mishandles null values in a nullable column, and prose descriptions of the desired behaviour have not fixed it across two attempts. What is the most effective next input?",
+  "options": {
+   "A": "A specific test case: an example input row containing the null and the exact output row expected.",
+   "B": "A longer explanation of SQL null semantics and three-valued logic.",
+   "C": "A request that the model add defensive null checks throughout the script.",
+   "D": "A switch to plan mode so the null handling is designed before it is implemented."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Specific test cases with example input and expected output are the effective way to fix edge-case handling after prose has failed. B explains theory where a concrete expectation is needed. C produces scattered guards without defining correct behaviour. D applies architectural process to a single well-identified defect."
+ },
+ {
+  "id": 40,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D4",
+  "type": "single",
+  "question": "Your review prompt says \"report anything that could cause a production issue.\" The bot flags a local variable shadowing a module import in a five-line helper, a missing index on a table with 40 rows, and a genuine unhandled promise rejection, all at the same weight. What change most improves the signal?",
+  "options": {
+   "A": "Define explicitly which categories to report — bugs, security, data loss — and which to skip, such as minor style and locally-scoped patterns with no external effect.",
+   "B": "Add \"use your judgment about what really matters in production\" to the prompt.",
+   "C": "Ask the model to estimate the production impact of each finding and report only the top three.",
+   "D": "Restrict the review to files that have changed in the last 30 days, where risk is concentrated."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Specific criteria naming reportable and skippable categories are what produce precision; the model is currently applying a standard so broad that everything qualifies. B replaces one vague instruction with another. C ranks an unfiltered set and caps it arbitrarily. D changes scope rather than judgment."
+ },
+ {
+  "id": 41,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D4",
+  "type": "single",
+  "question": "Your agent handles clear requests well but behaves inconsistently on ambiguous ones — \"I want to return this, or maybe just get store credit, what do you think?\" Sometimes it initiates a return, sometimes it explains both options, sometimes it escalates. What is the most effective intervention?",
+  "options": {
+   "A": "Add two to four few-shot examples of ambiguous requests, each showing the chosen action and the reasoning for choosing it over the plausible alternatives.",
+   "B": "Add a rule that any request containing \"or\" must be met with a clarifying question.",
+   "C": "Add a rule that ambiguous requests are always escalated to a human.",
+   "D": "Increase the detail of every tool description so the correct action becomes unambiguous."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Few-shot examples targeted at ambiguous scenarios, showing why one action was chosen over plausible alternatives, are the effective technique — and they generalize to ambiguities you did not enumerate. B is a brittle keyword rule. C escalates a case the agent could resolve, hurting first-contact resolution. D improves tool selection, not the judgment about what the customer wants."
+ },
+ {
+  "id": 42,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "single",
+  "question": "You want structured output but also want the model to be able to say \"this document does not match any of my schemas\" rather than forcing an extraction. Which tool_choice setting fits?",
+  "options": {
+   "A": "\"auto\", which lets the model return text when no schema applies, accepting that you must then handle the non-tool response.",
+   "B": "\"any\", which still permits a text response when no tool is appropriate.",
+   "C": "Forced selection of a fallback tool, which is equivalent to auto but with schema guarantees.",
+   "D": "\"auto\" combined with a required unmatched_document field in every schema."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "\"auto\" is the setting under which the model may return text instead of calling a tool, which is what makes the escape hatch possible. B is precisely the opposite: \"any\" requires a tool call. C is a defensible design but is not equivalent to auto — it forces one specific tool every time. D adds a field to schemas that will not be invoked when nothing matches."
+ },
+ {
+  "id": 43,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "single",
+  "question": "Your schema has 22 fields, all marked required. Reviewers find that for sparse documents the model fills roughly a third of them with plausible but unsupported values. What is the causal chain?",
+  "options": {
+   "A": "Required fields create pressure to produce a value for every field, so the model fabricates rather than violating the schema; marking genuinely optional fields as nullable removes that pressure.",
+   "B": "The model is exceeding its context budget on long documents and filling remaining fields from prior examples.",
+   "C": "The schema lacks type constraints, so the model produces values that pass validation without being grounded.",
+   "D": "Required fields are correct; the fabrication is a temperature artefact and will resolve at temperature 0."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "A required field is an instruction to produce a value, and when the document has none the model produces one anyway. Making fields nullable where the source may legitimately lack the information is what prevents this. B and D attribute a schema-design effect to unrelated mechanics. C is wrong — tighter types constrain shape, not grounding."
+ },
+ {
+  "id": 44,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "multi",
+  "question": "Your validation-retry loop needs to decide, on each failure, whether to retry or route to a human. Which TWO failures are worth retrying with error feedback? (Select 2.)",
+  "options": {
+   "A": "A currency amount returned as \"USD 1,240.00\" where the schema requires a number.",
+   "B": "An output where a required nested object was returned as a flat string.",
+   "C": "A missing counterparty name where the contract's signature page is not included in the provided pages.",
+   "D": "A missing lab reference range where the document explicitly states ranges are published separately."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "Format mismatches and structural output errors are exactly what retry-with-error-feedback resolves, because the information is present and only the representation is wrong. C and D describe information absent from the provided source, where no number of retries can help and further attempts invite fabrication."
+ },
+ {
+  "id": 45,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "single",
+  "question": "Which statement most accurately describes what tool use with a strict JSON schema does and does not guarantee?",
+  "options": {
+   "A": "It guarantees the output parses and conforms to the declared structure and types; it does not guarantee the values are correct, consistent with each other, or placed in the right fields.",
+   "B": "It guarantees both structural and semantic validity, since the schema constrains what values each field may hold.",
+   "C": "It guarantees parsing but not type conformance, so numeric fields may still return strings.",
+   "D": "It guarantees nothing beyond a well-formed response; schema conformance still requires downstream validation."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Strict schemas eliminate syntax errors and enforce structure and types, while semantic errors — a total that does not reconcile, a value in the wrong field — remain possible and require separate validation. B overstates the guarantee, C understates type enforcement, and D understates the mechanism entirely."
+ },
+ {
+  "id": 46,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "single",
+  "question": "Your enum for document_status has values approved, rejected, and pending. Auditors find documents whose status is genuinely indeterminate — the text is contradictory — being recorded as pending. What is the appropriate change?",
+  "options": {
+   "A": "Add an \"unclear\" value so indeterminate cases are recorded as indeterminate rather than collapsing into an existing status.",
+   "B": "Add a confidence score alongside the status so downstream consumers can discount low-confidence values.",
+   "C": "Route contradictory documents to human review without extracting a status at all.",
+   "D": "Rename pending to pending_or_unclear so the existing value covers both cases."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Adding an explicit value for ambiguous cases is the schema pattern for this, and it keeps 'indeterminate' distinguishable from a real status. B leaves a wrong value in the field. C is a reasonable additional step but does not fix the schema that forced the misclassification. D merges two distinct meanings into one label, so downstream consumers still cannot tell them apart."
+ },
+ {
+  "id": 47,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D4",
+  "type": "single",
+  "question": "A PR touches 22 files. Your single-pass review gives detailed feedback on the first few files, thin comments on the rest, and flags a pattern in file 18 that it approved in file 3. What is the mechanism behind this, and the fix?",
+  "options": {
+   "A": "Attention dilution across a large input; split into per-file passes for consistent local depth plus a separate cross-file integration pass.",
+   "B": "Context overflow; the later files were truncated and should be reviewed in a second call.",
+   "C": "Sampling variance; running the same review three times and merging results will even it out.",
+   "D": "Prompt position effects; moving the review instructions to the end of the prompt will restore consistency."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Uneven depth and self-contradictory findings across many files in one pass are the signature of attention dilution, and the remedy is focused per-file passes plus a dedicated integration pass. B would drop content entirely rather than treat it thinly. C multiplies cost without addressing the cause. D misapplies a position effect that concerns input content, not instruction placement."
+ },
+ {
+  "id": 48,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D4",
+  "type": "single",
+  "question": "Your generation step and review step both run in CI. Someone proposes saving cost by having the generation session also produce the review, since it already has the code in context. What is the trade-off?",
+  "options": {
+   "A": "It saves tokens but degrades detection, because a session that retains its own generation reasoning is less likely to question the decisions it just made.",
+   "B": "It saves tokens with no detection cost, since the reviewing model is the same and has more context.",
+   "C": "It costs more tokens overall, because the review must re-read the code it generated.",
+   "D": "It is equivalent in detection but harder to parallelize in the pipeline."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Self-review is weaker than independent review precisely because the reasoning that produced the code is still in context. B ignores that bias. C misstates the token economics — the code is already in context. D reduces a substantive quality difference to a scheduling concern."
+ },
+ {
+  "id": 49,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "single",
+  "question": "You are batching 20,000 documents overnight. Your submission code assigns custom_id values as sequential integers generated at submission time, and stores nothing linking them to source documents. What breaks?",
+  "options": {
+   "A": "Responses cannot be mapped back to their source documents, so neither results nor failures can be attributed.",
+   "B": "Nothing — the batch API returns responses in submission order, so position is sufficient.",
+   "C": "Only failure handling breaks; successful responses carry the original document content and can be matched on it.",
+   "D": "Nothing at submission, but resubmission of failures will duplicate ids and be rejected."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "custom_id is the correlation mechanism, and it only works if the value is meaningful to your system — an id you cannot resolve back to a document is no better than none. B relies on ordering guarantees you should not assume. C assumes responses echo enough content to re-identify the source, which is not reliable. D describes a lesser downstream symptom of the same root problem."
+ },
+ {
+  "id": 50,
+  "scenario": "Structured Data Extraction",
+  "domain": "D4",
+  "type": "multi",
+  "question": "Which TWO workloads are appropriate for the Message Batches API? (Select 2.)",
+  "options": {
+   "A": "A weekly compliance audit over the previous week's contracts, reviewed each Monday morning.",
+   "B": "An overnight re-extraction of a corpus after a schema change, needed by the next business day.",
+   "C": "A validation step inside a web form that must return before the user can submit.",
+   "D": "An interactive document-upload flow where the user waits on screen for the extracted fields."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "Batch processing suits non-blocking, latency-tolerant work with generous deadlines. C and D are blocking paths where a user is waiting, which the batch API's lack of a latency SLA makes unsuitable regardless of typical completion times."
+ },
+ {
+  "id": 51,
+  "scenario": "Claude Code for Continuous Integration",
+  "domain": "D4",
+  "type": "single",
+  "question": "Your prompt asks for review findings in a specific format and you have added three few-shot examples, yet roughly 4% of runs still emit a stray sentence before the JSON or omit a field. The bot must never fail to parse. What is the stronger mechanism?",
+  "options": {
+   "A": "Define the finding structure as a tool input schema and read the findings from the tool_use response, which removes the syntax failure mode rather than reducing it.",
+   "B": "Add more few-shot examples until the failure rate approaches zero.",
+   "C": "Wrap the parser in a retry that re-runs the review when parsing fails.",
+   "D": "Ask the model to validate its own output against the format before returning it."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Few-shot examples shape output but cannot guarantee it; a schema enforced through tool use eliminates JSON syntax errors and missing required fields outright. B chases an asymptote. C pays for a full re-run on every failure and still has no guarantee. D asks the model to catch its own formatting error in the same pass."
+ },
+ {
+  "id": 52,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D5",
+  "type": "single",
+  "question": "Early in a long conversation a customer said \"I need this resolved before I travel on the 14th.\" Twenty turns later the agent offers a replacement arriving on the 19th and treats the case as resolved. What was lost, and how is it prevented?",
+  "options": {
+   "A": "A customer-stated expectation was condensed away during summarization; expectations of this kind belong in the persistent case-facts layer alongside amounts and dates.",
+   "B": "The agent lacked a tool to check delivery dates against customer constraints.",
+   "C": "The model exceeded its context window and dropped the earliest turns entirely.",
+   "D": "The customer should have been asked to restate any deadlines before a resolution was proposed."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Progressive summarization degrades exactly this class of detail — dates, amounts, and customer-stated expectations — which is why they belong in a persistent facts block outside the summarized history. B adds tooling for a fact the agent no longer had. C is a different failure mode from summarization. D pushes the burden onto the customer."
+ },
+ {
+  "id": 53,
+  "scenario": "Customer Support Resolution Agent",
+  "domain": "D5",
+  "type": "multi",
+  "question": "Which TWO situations are legitimate escalation triggers, as distinct from cases that merely feel difficult? (Select 2.)",
+  "options": {
+   "A": "The customer explicitly asks to speak to a human.",
+   "B": "The policy is silent or ambiguous on what the customer is requesting.",
+   "C": "The customer's message is long and covers several unrelated issues.",
+   "D": "The agent's self-reported confidence for this case falls below 0.7."
+  },
+  "correct": [
+   "A",
+   "B"
+  ],
+  "explanation": "Explicit requests for a human, policy gaps or ambiguity, and inability to make meaningful progress are the legitimate triggers. C describes a multi-concern message, which should be decomposed and handled rather than escalated. D relies on self-reported confidence, which is poorly calibrated and tends to be high on exactly the hard cases."
+ },
+ {
+  "id": 54,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D5",
+  "type": "single",
+  "question": "Your search subagent returns 30 results per query, each with full page text. The coordinator forwards all of it to analysis, which forwards its full reasoning to synthesis. By synthesis the input is enormous and quality suffers. Where is the most effective intervention?",
+  "options": {
+   "A": "At each producing stage: have every agent return structured key facts, citations, and relevance rather than full content and reasoning chains.",
+   "B": "At the synthesis stage: have it summarize its input before beginning to synthesize.",
+   "C": "At the coordinator: have it truncate each agent's output to a fixed character budget before forwarding.",
+   "D": "At the search stage only: reduce results per query from 30 to 10."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "When downstream agents have limited context budgets, the fix belongs upstream at every producing stage — structured facts and citations instead of verbose content. B pays to ingest the volume first. C truncates arbitrarily, cutting mid-finding. D reduces volume at one stage while the amplification at the others continues."
+ },
+ {
+  "id": 55,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D5",
+  "type": "single",
+  "question": "Your synthesis agent receives well-attributed findings but its output cites sources only in a general bibliography, so individual claims cannot be traced. Where did attribution break, and what fixes it?",
+  "options": {
+   "A": "It broke during synthesis, where findings were compressed without carrying their claim-source mappings; synthesis must preserve and merge those mappings rather than pooling sources at the end.",
+   "B": "It broke at the search stage, which should have embedded citations inline in its result text.",
+   "C": "It broke at the report generator, which should re-derive citations by searching for each claim.",
+   "D": "It did not break; a bibliography is standard practice and per-claim attribution is unnecessary."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Source attribution is typically lost at summarization steps that compress findings without preserving claim-source mappings; the synthesis agent must carry those mappings through. B misplaces the failure — the findings arrived well-attributed. C would re-derive attribution by guesswork. D dismisses a real requirement for cited research output."
+ },
+ {
+  "id": 56,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D5",
+  "type": "single",
+  "question": "Your coordinator aggregates six subagent outputs into one long input for synthesis and appends a note at the very end listing which sources were unavailable. Reviewers report the coverage caveats are usually reflected, but findings from the middle subagents are underweighted. What does this tell you?",
+  "options": {
+   "A": "Position effects are operating as expected: the end of the input is attended to reliably, the middle is not, so key findings should be summarized at the start and the body given explicit section headers.",
+   "B": "The caveat note is crowding out the findings and should be moved to a separate request.",
+   "C": "The middle subagents are producing lower-quality output and should be re-prompted.",
+   "D": "The aggregation order is random and should be alphabetized for consistency."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "That the trailing note survives while middle content is underweighted is the classic beginning-and-end reliability pattern. Front-loading a key-findings summary and adding explicit structure mitigates it. B misreads a positional effect as crowding. C blames content without evidence. D changes which agents land in the weak position, not the effect."
+ },
+ {
+  "id": 57,
+  "scenario": "Developer Productivity with Claude",
+  "domain": "D5",
+  "type": "single",
+  "question": "Two hours into an exploration, the agent's context is dominated by directory listings and file contents from the discovery phase, and its answers are becoming vague. The findings themselves are still needed. What is the appropriate sequence?",
+  "options": {
+   "A": "Record the key findings in a scratchpad file first, then run /compact so the discovery output is reduced without losing what was learned.",
+   "B": "Run /compact immediately, since compaction preserves conclusions and discards only raw output.",
+   "C": "Start a new session, since /compact cannot recover a session that has already degraded.",
+   "D": "Continue working and let the agent re-read files whenever it needs a detail it has lost."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Scratchpad files persist key findings across context boundaries, and compaction reduces the verbose discovery output — the order matters, because compaction should not be the only thing standing between you and the findings. B overstates what compaction guarantees about which details survive. C discards recoverable work. D re-reads the same files repeatedly, refilling the context."
+ },
+ {
+  "id": 58,
+  "scenario": "Multi-Agent Research System",
+  "domain": "D5",
+  "type": "single",
+  "question": "Your coordinator receives a subagent failure it cannot recover from: one of four planned source types is entirely unavailable. Which response is correct?",
+  "options": {
+   "A": "Proceed with the three available source types and annotate the synthesis output to show which topic areas rest on incomplete evidence.",
+   "B": "Terminate the workflow and report failure, since a report missing a planned source type is not trustworthy.",
+   "C": "Proceed silently, since three of four source types is sufficient coverage for most topics.",
+   "D": "Substitute the missing source type with additional queries against the available ones, presenting the result as complete."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Proceeding with partial results plus explicit coverage annotation is the designed behaviour; terminating an entire workflow on a single failure and silently suppressing the gap are both anti-patterns. B is the former, C the latter, and D compounds C by presenting substituted coverage as equivalent."
+ },
+ {
+  "id": 59,
+  "scenario": "Structured Data Extraction",
+  "domain": "D5",
+  "type": "single",
+  "question": "Your model outputs a field-level confidence score for each extracted value. You want to set a review threshold. What is the correct procedure?",
+  "options": {
+   "A": "Calibrate the threshold against a labelled validation set, measuring actual accuracy at each confidence level rather than assuming the scores are already calibrated.",
+   "B": "Set the threshold at 0.9, a conventional default that balances review load against risk.",
+   "C": "Set the threshold so that exactly the volume your reviewers can handle falls below it.",
+   "D": "Use the model's own recommendation for where the threshold should sit, since it produced the scores."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "Field-level confidence must be calibrated against labelled data before it can be trusted for routing — the raw scores are not accuracy estimates. B picks a number with no evidence behind it. C sizes the queue to capacity without knowing whether it catches the errors. D asks the model to validate its own uncalibrated output."
+ },
+ {
+  "id": 60,
+  "scenario": "Structured Data Extraction",
+  "domain": "D5",
+  "type": "single",
+  "question": "Your accuracy dashboard shows 96% overall, steady for three months. A downstream team reports that lab-report extractions have been wrong often enough that they have stopped trusting the field. What does this most likely indicate?",
+  "options": {
+   "A": "The aggregate is masking poor performance on one document type; accuracy must be analyzed by document type and field rather than in total.",
+   "B": "The downstream team is misreading the data, since 96% aggregate accuracy is strong.",
+   "C": "The extraction model has drifted recently and needs re-evaluation against its original benchmark.",
+   "D": "The confidence threshold is set too low, so too many weak extractions are being auto-accepted."
+  },
+  "correct": [
+   "A"
+  ],
+  "explanation": "A high aggregate can hide a segment performing badly, which is why accuracy must be validated by document type and field before automation decisions are made. B dismisses direct evidence from the consumer. C is contradicted by three months of steady aggregate. D may follow from the segment analysis, but the threshold is not the diagnosis until you know which segment is failing."
+ }
+]

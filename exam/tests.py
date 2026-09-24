@@ -298,3 +298,93 @@ class ExamFlowTests(TestCase):
         self.client.post("/results/delete-all/", follow=True)
         self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
         self.assertTrue(Attempt.objects.filter(pk=second.id, submitted_at=None).exists())
+
+    # -- CS-1: Single attempt deletion ------------------------------------
+    def test_delete_single_attempt_others_remain(self):
+        """AC1: Delete a single finished attempt; other attempts remain."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        third = self._start()
+        self.client.post(f"/attempt/{third.id}/submit/", {"full_form": "1"})
+
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 3)
+        self.client.post(f"/attempt/{second.id}/delete/")
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 2)
+        self.assertTrue(Attempt.objects.filter(pk=first.id).exists())
+        self.assertFalse(Attempt.objects.filter(pk=second.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=third.id).exists())
+
+    def test_delete_from_results_redirects_to_start(self):
+        """AC2: Delete from score report redirects to start page."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        resp = self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertRedirects(resp, "/")
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_discard_in_progress_attempt(self):
+        """AC3: Discard an in-progress attempt from start-page banner."""
+        attempt = self._start()
+        self.assertIsNone(attempt.submitted_at)
+        self.assertEqual(Attempt.objects.filter(submitted_at=None).count(), 1)
+        resp = self.client.post(f"/attempt/{attempt.id}/delete/", follow=True)
+        self.assertContains(resp, "That attempt was deleted.")
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+        self.assertEqual(Attempt.objects.filter(submitted_at=None).count(), 0)
+
+    def test_discard_paused_attempt(self):
+        """AC3: Discard a paused attempt from start-page banner."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/pause/", {"state": "pause"})
+        attempt.refresh_from_db()
+        self.assertTrue(attempt.is_paused)
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_deleted_attempt_urls_return_404(self):
+        """AC5: After delete, history/results/review URLs return 404."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        
+        resp_take = self.client.get(f"/attempt/{attempt.id}/")
+        self.assertEqual(resp_take.status_code, 404)
+        resp_results = self.client.get(f"/attempt/{attempt.id}/results/")
+        self.assertEqual(resp_results.status_code, 404)
+        resp_review = self.client.get(f"/attempt/{attempt.id}/review/")
+        self.assertEqual(resp_review.status_code, 404)
+
+    def test_delete_clears_session_pointer(self):
+        """AC6: If deleted attempt is in session, clear the session pointer."""
+        attempt = self._start()
+        self.assertEqual(self.client.session.get("attempt_id"), str(attempt.id))
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertIsNone(self.client.session.get("attempt_id"))
+
+    def test_delete_clears_session_for_finished_attempt(self):
+        """AC6: Clear session pointer even for finished attempts."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        self.assertEqual(self.client.session.get("attempt_id"), str(attempt.id))
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertIsNone(self.client.session.get("attempt_id"))
+
+    def test_delete_other_attempt_preserves_session(self):
+        """AC6: Deleting another attempt preserves current session pointer."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        self.client.post(f"/attempt/{first.id}/delete/")
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        self.assertTrue(Attempt.objects.filter(pk=second.id).exists())
+
+    def test_delete_is_post_only(self):
+        """AC8: Delete is POST only; GET must not delete."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        resp = self.client.get(f"/attempt/{attempt.id}/delete/")
+        self.assertEqual(resp.status_code, 405)  # Method Not Allowed
+        self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())

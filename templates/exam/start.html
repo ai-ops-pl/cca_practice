@@ -6,6 +6,7 @@
 <div class="panel resume">
   <h2 style="margin-bottom:6px">{% if in_progress.is_paused %}Paused attempt{% else %}Attempt in progress{% endif %}</h2>
   <p class="lede" style="margin-bottom:14px">
+    {{ in_progress.bank_label }} &middot;
     {{ in_progress.answered_count }}/{{ in_progress.order|length }} answered
     &middot; {{ in_progress.seconds_remaining|default:0 }} seconds remaining
     {% if in_progress.is_paused %}&middot; timer is frozen{% endif %}
@@ -49,7 +50,16 @@
 
   <form method="post" action="{% url 'begin' %}" style="margin-top:22px">
     {% csrf_token %}
-    
+
+    <div style="margin-bottom:16px">
+      <label for="bank-select" style="font-size:15px;font-weight:600;margin-bottom:8px;display:block">Choose test</label>
+      <select id="bank-select" name="bank" onchange="location.search = '?bank=' + encodeURIComponent(this.value)">
+        {% for b in banks %}
+        <option value="{{ b.key }}" {% if b.key == bank %}selected{% endif %}>{{ b.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
     <div style="margin-bottom:16px">
       <label style="font-size:15px;font-weight:600;margin-bottom:8px;display:block">Choose form</label>
       <div style="display:flex;gap:16px;flex-wrap:wrap">
@@ -109,6 +119,7 @@
       <tr>
         <th style="width:30px"></th>
         <th>Taken</th>
+        <th>Test</th>
         <th>Form</th>
         <th>Candidate</th>
         <th class="num">Raw</th>
@@ -122,6 +133,7 @@
           <input type="checkbox" name="attempt_ids" value="{{ a.id }}" class="attempt-checkbox">
         </td>
         <td>{{ a.submitted_at|date:"j M Y, H:i" }}</td>
+        <td>{{ a.bank_label }}</td>
         <td>{% if a.form_type == "short" %}Short{% else %}Full{% endif %} &middot; {{ a.order|length }}</td>
         <td>{{ a.candidate|default:"&mdash;" }}</td>
         <td class="num">{{ a.raw_correct }}/{{ a.order|length }}</td>

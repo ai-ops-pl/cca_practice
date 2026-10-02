@@ -1,6 +1,7 @@
 """End-to-end checks for the mock exam engine."""
 
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.core.management import call_command
@@ -10,11 +11,13 @@ from django.utils import timezone
 from .formbuild import BankError, build_validated_presentation, presentation_is_well_mixed, validate_bank
 from .models import LETTERS, Attempt, Question
 
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
 
 class ExamFlowTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        call_command("load_questions", verbosity=0)
+        call_command("load_questions", path=str(DATA_DIR / "test_3.json"), verbosity=0)
 
     def _correct(self, attempt, q):
         return sorted(attempt.display_correct(q))

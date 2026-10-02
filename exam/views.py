@@ -1,28 +1,51 @@
+import io
 import random
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib import messages
+from django.core.management import call_command
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
 from .formbuild import BankError, build_validated_presentation, validate_bank
-from .models import Attempt, Question
+from .models import Attempt, Question, bank_label
+
+DATA_DIR = Path(__file__).resolve().parent / "data"
 
 
 def _cfg():
     return settings.EXAM
 
 
+def _banks(load_missing=False):
+    """Banks are the JSON files in exam/data; files not yet in the DB are loaded on demand."""
+    loaded = set(Question.objects.values_list("bank", flat=True).distinct())
+    banks = []
+    for path in sorted(DATA_DIR.glob("*.json")):
+        if path.stem not in loaded:
+            if not load_missing:
+                continue
+            call_command("load_questions", path=str(path), stdout=io.StringIO())
+        banks.append(path.stem)
+    return banks
+
+
 def start(request):
-    ready = Question.objects.count()
+    banks = _banks(load_missing=True)
+    bank = request.GET.get("bank")
+    if bank not in banks:
+        bank = banks[0] if banks else ""
+    bank_questions = Question.objects.filter(bank=bank)
+    ready = bank_questions.count()
     in_progress = None
     attempt_id = request.session.get("attempt_id")
     if attempt_id:
         in_progress = Attempt.objects.filter(pk=attempt_id, submitted_at=None).first()
 
-    bank_errors = validate_bank(list(Question.objects.all())) if ready else [
+    bank_errors = validate_bank(list(bank_questions)) if ready else [
         "No questions loaded. Run: python manage.py load_questions"
     ]
 
@@ -32,8 +55,10 @@ def start(request):
         "bank_errors": bank_errors,
         "bank_ok": not bank_errors,
         "in_progress": in_progress,
+        "banks": [{"key": b, "label": bank_label(b)} for b in banks],
+        "bank": bank,
         "domains": [
-            {"key": k, **v, "count": Question.objects.filter(domain=k).count()}
+            {"key": k, **v, "count": bank_questions.filter(domain=k).count()}
             for k, v in _cfg()["DOMAINS"].items()
         ],
         "recent": Attempt.objects.exclude(submitted_at=None),
@@ -43,7 +68,25 @@ def start(request):
 
 @require_POST
 def begin(request):
-    questions = list(Question.objects.all())
+    form_type = request.POST.get("form", "full")
+    if form_type not in ["full", "short"]:
+        form_type = "full"
+    
+    banks = _banks()
+    bank = request.POST.get("bank")
+    if bank not in banks:
+        bank = banks[0] if banks else ""
+    questions = list(Question.objects.filter(bank=bank))
+
+    # For short form, sample 30 questions maintaining domain weights
+    if form_type == "short":
+        try:
+            from .formbuild import sample_short_form
+            questions = sample_short_form(questions)
+        except Exception as exc:
+            messages.error(request, f"Cannot create short form: {exc}")
+            return redirect("start")
+    
     numbers = [q.number for q in questions]
     if not numbers:
         messages.error(request, "No questions loaded. Run: python manage.py load_questions")
@@ -60,9 +103,14 @@ def begin(request):
     else:
         numbers.sort()
 
+    # Set duration based on form type
+    duration = 60 if form_type == "short" else 120
+
     attempt = Attempt.objects.create(
         candidate=request.POST.get("candidate", "").strip()[:120],
-        duration_minutes=_cfg()["DURATION_MINUTES"],
+        bank=bank,
+        form_type=form_type,
+        duration_minutes=duration,
         order=numbers,
         answers={},
         flagged=[],
@@ -126,7 +174,7 @@ def autosave(request, attempt_id):
         attempt.save(update_fields=["flagged"])
         return JsonResponse({"ok": True, "flagged": num in flags, "paused": attempt.is_paused})
 
-    q = Question.objects.filter(number=int(number)).first() if number.isdigit() else None
+    q = Question.objects.filter(bank=attempt.bank, number=int(number)).first() if number.isdigit() else None
     letters = _read_letters(request)
     if q and q.qtype == Question.MULTI and len(letters) > q.select_count:
         letters = letters[: q.select_count]
@@ -278,4 +326,38 @@ def delete_all_results(request):
         request,
         "All saved results were deleted." if count else "There were no saved results to delete.",
     )
+    return redirect("start")
+
+
+@require_POST
+def delete_selected_attempts(request):
+    """CS-3: Delete multiple selected finished attempts."""
+    attempt_ids = request.POST.getlist("attempt_ids")
+    
+    if not attempt_ids:
+        messages.info(request, "No attempts were selected.")
+        return redirect("start")
+    
+    # Only delete finished attempts (exclude in-progress and paused)
+    selected = Attempt.objects.filter(
+        pk__in=attempt_ids,
+        submitted_at__isnull=False
+    )
+    
+    count = selected.count()
+    
+    # Clear session pointer if current attempt is being deleted
+    current = request.session.get("attempt_id")
+    if current and selected.filter(pk=current).exists():
+        request.session.pop("attempt_id", None)
+    
+    selected.delete()
+    
+    if count == 1:
+        messages.success(request, "1 attempt was deleted.")
+    elif count > 1:
+        messages.success(request, f"{count} attempts were deleted.")
+    else:
+        messages.info(request, "No finished attempts were selected.")
+    
     return redirect("start")

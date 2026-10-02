@@ -6,9 +6,20 @@ import random
 import re
 from collections import Counter
 
+from django.conf import settings
+
 from .models import LETTERS, Question
 
 MAX_SHUFFLE_TRIES = 50
+
+# Short form domain allocation (30 items total)
+SHORT_FORM_DOMAIN_COUNTS = {
+    "D1": 8,  # 27% of 30 ≈ 8.1
+    "D2": 5,  # 18% of 30 ≈ 5.4
+    "D3": 6,  # 20% of 30 = 6
+    "D4": 6,  # 20% of 30 = 6
+    "D5": 5,  # 15% of 30 ≈ 4.5
+}
 
 
 class BankError(Exception):
@@ -76,6 +87,23 @@ def shuffle_presentation(questions: list[Question], rng=None) -> dict:
         rng.shuffle(slots)
         presentation[str(q.number)] = {"slots": slots}
     return presentation
+
+
+def sample_short_form(all_questions: list[Question], rng=None) -> list[Question]:
+    """Sample 30 questions from the bank, maintaining domain weights."""
+    rng = rng or random
+    by_domain = {}
+    for q in all_questions:
+        by_domain.setdefault(q.domain, []).append(q)
+    
+    sampled = []
+    for domain, count in SHORT_FORM_DOMAIN_COUNTS.items():
+        available = by_domain.get(domain, [])
+        if len(available) < count:
+            raise BankError(f"Not enough questions in {domain}: need {count}, have {len(available)}")
+        sampled.extend(rng.sample(available, count))
+    
+    return sampled
 
 
 def build_validated_presentation(questions: list[Question], rng=None) -> dict:

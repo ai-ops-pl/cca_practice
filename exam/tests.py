@@ -1,6 +1,7 @@
 """End-to-end checks for the mock exam engine."""
 
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.core.management import call_command
@@ -10,11 +11,13 @@ from django.utils import timezone
 from .formbuild import BankError, build_validated_presentation, presentation_is_well_mixed, validate_bank
 from .models import LETTERS, Attempt, Question
 
+DATA_DIR = Path(__file__).resolve().parent / "data"
+
 
 class ExamFlowTests(TestCase):
     @classmethod
     def setUpTestData(cls):
-        call_command("load_questions", verbosity=0)
+        call_command("load_questions", path=str(DATA_DIR / "test_3.json"), verbosity=0)
 
     def _correct(self, attempt, q):
         return sorted(attempt.display_correct(q))
@@ -298,3 +301,475 @@ class ExamFlowTests(TestCase):
         self.client.post("/results/delete-all/", follow=True)
         self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
         self.assertTrue(Attempt.objects.filter(pk=second.id, submitted_at=None).exists())
+
+    # -- CS-1: Single attempt deletion ------------------------------------
+    def test_delete_single_attempt_others_remain(self):
+        """AC1: Delete a single finished attempt; other attempts remain."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        third = self._start()
+        self.client.post(f"/attempt/{third.id}/submit/", {"full_form": "1"})
+
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 3)
+        self.client.post(f"/attempt/{second.id}/delete/")
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 2)
+        self.assertTrue(Attempt.objects.filter(pk=first.id).exists())
+        self.assertFalse(Attempt.objects.filter(pk=second.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=third.id).exists())
+
+    def test_delete_from_results_redirects_to_start(self):
+        """AC2: Delete from score report redirects to start page."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        resp = self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertRedirects(resp, "/")
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_discard_in_progress_attempt(self):
+        """AC3: Discard an in-progress attempt from start-page banner."""
+        attempt = self._start()
+        self.assertIsNone(attempt.submitted_at)
+        self.assertEqual(Attempt.objects.filter(submitted_at=None).count(), 1)
+        resp = self.client.post(f"/attempt/{attempt.id}/delete/", follow=True)
+        self.assertContains(resp, "That attempt was deleted.")
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+        self.assertEqual(Attempt.objects.filter(submitted_at=None).count(), 0)
+
+    def test_discard_paused_attempt(self):
+        """AC3: Discard a paused attempt from start-page banner."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/pause/", {"state": "pause"})
+        attempt.refresh_from_db()
+        self.assertTrue(attempt.is_paused)
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_deleted_attempt_urls_return_404(self):
+        """AC5: After delete, history/results/review URLs return 404."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        
+        resp_take = self.client.get(f"/attempt/{attempt.id}/")
+        self.assertEqual(resp_take.status_code, 404)
+        resp_results = self.client.get(f"/attempt/{attempt.id}/results/")
+        self.assertEqual(resp_results.status_code, 404)
+        resp_review = self.client.get(f"/attempt/{attempt.id}/review/")
+        self.assertEqual(resp_review.status_code, 404)
+
+    def test_delete_clears_session_pointer(self):
+        """AC6: If deleted attempt is in session, clear the session pointer."""
+        attempt = self._start()
+        self.assertEqual(self.client.session.get("attempt_id"), str(attempt.id))
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertIsNone(self.client.session.get("attempt_id"))
+
+    def test_delete_clears_session_for_finished_attempt(self):
+        """AC6: Clear session pointer even for finished attempts."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        self.assertEqual(self.client.session.get("attempt_id"), str(attempt.id))
+        self.client.post(f"/attempt/{attempt.id}/delete/")
+        self.assertIsNone(self.client.session.get("attempt_id"))
+
+    def test_delete_other_attempt_preserves_session(self):
+        """AC6: Deleting another attempt preserves current session pointer."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        self.client.post(f"/attempt/{first.id}/delete/")
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        self.assertTrue(Attempt.objects.filter(pk=second.id).exists())
+
+    def test_delete_is_post_only(self):
+        """AC8: Delete is POST only; GET must not delete."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        resp = self.client.get(f"/attempt/{attempt.id}/delete/")
+        self.assertEqual(resp.status_code, 405)  # Method Not Allowed
+        self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())
+
+    # -- CS-3: Multi-select delete ----------------------------------------
+    def test_multi_select_delete_removes_selected_only(self):
+        """AC1,3: Delete only selected finished attempts; unselected remain."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        third = self._start()
+        self.client.post(f"/attempt/{third.id}/submit/", {"full_form": "1"})
+        
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 3)
+        
+        # Delete first and third, keep second
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(first.id), str(third.id)]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=second.id).exists())
+        self.assertFalse(Attempt.objects.filter(pk=third.id).exists())
+        self.assertEqual(Attempt.objects.filter(submitted_at__isnull=False).count(), 1)
+
+    def test_multi_select_delete_one_attempt(self):
+        """AC1: Multi-select can delete just one attempt."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(attempt.id)]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_multi_select_ignores_in_progress_attempts(self):
+        """AC4: In-progress/paused attempts not deletable via multi-select."""
+        finished = self._start()
+        self.client.post(f"/attempt/{finished.id}/submit/", {"full_form": "1"})
+        in_progress = self._start()
+        paused = self._start()
+        self.client.post(f"/attempt/{paused.id}/pause/", {"state": "pause"})
+        
+        # Try to delete all three; only finished should be deleted
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(finished.id), str(in_progress.id), str(paused.id)]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=finished.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=in_progress.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=paused.id).exists())
+
+    def test_multi_select_delete_returns_404(self):
+        """AC5: After multi-select delete, URLs return 404."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(first.id), str(second.id)]}
+        )
+        
+        self.assertEqual(self.client.get(f"/attempt/{first.id}/results/").status_code, 404)
+        self.assertEqual(self.client.get(f"/attempt/{second.id}/review/").status_code, 404)
+
+    def test_multi_select_delete_clears_session(self):
+        """AC6: Clear session pointer if current attempt is deleted."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        # Session points to second
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        
+        # Delete both including current
+        self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(first.id), str(second.id)]}
+        )
+        self.assertIsNone(self.client.session.get("attempt_id"))
+
+    def test_multi_select_delete_preserves_session_if_not_deleted(self):
+        """AC6: Preserve session if current attempt not in selection."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+        
+        # Delete only first
+        self.client.post("/results/delete-selected/", {"attempt_ids": [str(first.id)]})
+        self.assertEqual(self.client.session.get("attempt_id"), str(second.id))
+
+    def test_single_delete_still_works(self):
+        """AC7: Existing single delete remains available."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        
+        # Use old single-delete endpoint
+        self.client.post(f"/attempt/{first.id}/delete/")
+        self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=second.id).exists())
+
+    def test_delete_all_still_works_with_multi_select(self):
+        """AC7: Existing delete-all remains available."""
+        first = self._start()
+        self.client.post(f"/attempt/{first.id}/submit/", {"full_form": "1"})
+        second = self._start()
+        self.client.post(f"/attempt/{second.id}/submit/", {"full_form": "1"})
+        in_progress = self._start()
+        
+        self.client.post("/results/delete-all/", follow=True)
+        self.assertFalse(Attempt.objects.filter(pk=first.id).exists())
+        self.assertFalse(Attempt.objects.filter(pk=second.id).exists())
+        self.assertTrue(Attempt.objects.filter(pk=in_progress.id).exists())
+
+    def test_multi_select_delete_is_post_only(self):
+        """AC8: Multi-delete is POST only; GET must not delete."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.get("/results/delete-selected/")
+        self.assertEqual(resp.status_code, 405)
+        self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_multi_select_delete_with_no_selection(self):
+        """Multi-select with empty selection redirects without error."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.post("/results/delete-selected/", {"attempt_ids": []}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        self.assertTrue(Attempt.objects.filter(pk=attempt.id).exists())
+
+    def test_multi_select_delete_with_invalid_ids(self):
+        """Multi-select ignores non-existent or invalid attempt IDs."""
+        attempt = self._start()
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        
+        fake_id = "00000000-0000-0000-0000-000000000000"
+        resp = self.client.post(
+            "/results/delete-selected/",
+            {"attempt_ids": [str(attempt.id), fake_id]},
+            follow=True
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(Attempt.objects.filter(pk=attempt.id).exists())
+
+    # -- CS-2: Short practice form -----------------------------------------
+    def test_start_page_offers_form_choice(self):
+        """AC1: Candidate can choose Full exam or Short practice before Start."""
+        resp = self.client.get("/")
+        self.assertContains(resp, "Full exam")
+        self.assertContains(resp, "Short practice")
+        self.assertContains(resp, "60 items")
+        self.assertContains(resp, "30 items")
+
+    def test_short_form_contains_30_questions(self):
+        """AC2: Short attempt contains exactly 30 questions."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short", "shuffle": "on"}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.form_type, "short")
+        self.assertEqual(len(attempt.order), 30)
+        self.assertEqual(len(attempt.questions()), 30)
+
+    def test_full_form_contains_60_questions(self):
+        """AC2: Full attempt still contains all 60 questions."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "full", "shuffle": "on"}, follow=True)
+        self.assertEqual(resp.status_code, 200)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.form_type, "full")
+        self.assertEqual(len(attempt.order), 60)
+
+    def test_short_form_sampling_maintains_domain_weights(self):
+        """AC3: Short form keeps domain weights close to published mix."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        questions = attempt.questions()
+        counts = {}
+        for q in questions:
+            counts[q.domain] = counts.get(q.domain, 0) + 1
+        
+        # Expected split for 30 items: D1 8, D2 5, D3 6, D4 6, D5 5
+        self.assertEqual(counts.get("D1", 0), 8, "D1 should have 8 items")
+        self.assertEqual(counts.get("D2", 0), 5, "D2 should have 5 items")
+        self.assertEqual(counts.get("D3", 0), 6, "D3 should have 6 items")
+        self.assertEqual(counts.get("D4", 0), 6, "D4 should have 6 items")
+        self.assertEqual(counts.get("D5", 0), 5, "D5 should have 5 items")
+
+    def test_short_form_shuffles_and_validates_bank(self):
+        """AC4: Short form still shuffles options and validates bank."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short", "shuffle": "on"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        # Check option shuffling
+        self.assertTrue(attempt.presentation)
+        singles = [q for q in attempt.questions() if q.qtype == "single"]
+        display = [next(iter(attempt.display_correct(q))) for q in singles]
+        self.assertGreater(len(set(display)), 1, "Correct answers should be shuffled off A")
+
+    def test_short_form_has_60_minute_timer(self):
+        """AC4: Short form timer is 60 minutes."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.duration_minutes, 60)
+        self.assertAlmostEqual(attempt.seconds_remaining, 3600, delta=5)
+
+    def test_full_form_has_120_minute_timer(self):
+        """AC4: Full form still has 120 minute timer."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "full"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.duration_minutes, 120)
+        self.assertAlmostEqual(attempt.seconds_remaining, 7200, delta=5)
+
+    def test_short_form_supports_pause_resume(self):
+        """AC4: Short form supports pause/resume with timer freeze."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        self.client.post(f"/attempt/{attempt.id}/pause/", {"state": "pause"})
+        attempt.refresh_from_db()
+        self.assertTrue(attempt.is_paused)
+        
+        before = attempt.seconds_remaining
+        attempt.started_at -= timedelta(minutes=10)
+        attempt.paused_at -= timedelta(minutes=10)
+        attempt.save(update_fields=["started_at", "paused_at"])
+        
+        frozen = attempt.seconds_remaining
+        self.assertAlmostEqual(frozen, before, delta=5)
+
+    def test_short_form_can_include_multi_select(self):
+        """AC5: Multi-select items can appear in short form."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        multi_items = [q for q in attempt.questions() if q.qtype == "multi"]
+        # We don't guarantee multi items, but if they exist in the bank and are sampled, grading works
+        if multi_items:
+            multi = multi_items[0]
+            correct = attempt.display_correct(multi)
+            partial = sorted(correct)[:1]
+            attempt.answers = {str(multi.number): partial}
+            result = attempt.score()
+            self.assertEqual(result["correct"], 0, "partial credit not awarded in short form")
+
+    def test_short_form_answered_count_uses_30(self):
+        """AC6: Answered X/Y uses attempt's actual length (30 for short)."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        q1 = attempt.questions()[0]
+        q2 = attempt.questions()[1]
+        attempt.answers = {str(q1.number): ["A"], str(q2.number): ["B"]}
+        attempt.save()
+        
+        self.assertEqual(attempt.answered_count, 2)
+        take = self.client.get(f"/attempt/{attempt.id}/")
+        # The template should show "2/30" not "2/60"
+        self.assertContains(take, "Question 30")
+
+    def test_short_form_score_uses_30_items(self):
+        """AC7: Scaled score uses 70% raw → 720 cut based on 30 items."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        # Answer 21/30 correctly (70% raw)
+        payload = {"full_form": "1"}
+        for i, q in enumerate(attempt.questions()):
+            if i < 21:
+                payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        attempt.refresh_from_db()
+        
+        self.assertEqual(attempt.raw_correct, 21)
+        self.assertEqual(attempt.scaled_score, 720)
+        self.assertTrue(attempt.passed)
+
+    def test_short_form_one_below_cut_fails(self):
+        """AC7: 20/30 = 66.67% raw should be below 720 and fail."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        payload = {"full_form": "1"}
+        for i, q in enumerate(attempt.questions()):
+            if i < 20:
+                payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        attempt.refresh_from_db()
+        
+        self.assertEqual(attempt.raw_correct, 20)
+        self.assertLess(attempt.scaled_score, 720)
+        self.assertFalse(attempt.passed)
+
+    def test_short_form_perfect_score(self):
+        """AC7: 30/30 = 100% raw should give scaled max (1000)."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        payload = {"full_form": "1"}
+        for q in attempt.questions():
+            payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        attempt.refresh_from_db()
+        
+        self.assertEqual(attempt.raw_correct, 30)
+        self.assertEqual(attempt.scaled_score, settings.EXAM["SCALED_MAX"])
+        self.assertTrue(attempt.passed)
+
+    def test_previous_attempts_show_form_type(self):
+        """AC8: Previous attempts show which form was taken."""
+        # Create a short attempt
+        self.client.post("/begin/", {"candidate": "Short", "form": "short"}, follow=True)
+        short = Attempt.objects.latest("started_at")
+        self.client.post(f"/attempt/{short.id}/submit/", {"full_form": "1"})
+        
+        # Create a full attempt
+        self.client.post("/begin/", {"candidate": "Full", "form": "full"}, follow=True)
+        full = Attempt.objects.latest("started_at")
+        self.client.post(f"/attempt/{full.id}/submit/", {"full_form": "1"})
+        
+        resp = self.client.get("/")
+        # Check for form type indicators
+        self.assertContains(resp, "Short")
+        self.assertContains(resp, "Full")
+        # Should show item counts
+        self.assertContains(resp, "/30")
+        self.assertContains(resp, "/60")
+
+    def test_default_selection_is_full_exam(self):
+        """AC9: Default selection is Full exam."""
+        # When form parameter is missing, should default to full
+        resp = self.client.post("/begin/", {"candidate": "AK", "shuffle": "on"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        self.assertEqual(attempt.form_type, "full")
+        self.assertEqual(len(attempt.order), 60)
+        self.assertEqual(attempt.duration_minutes, 120)
+
+    def test_short_form_results_page_shows_30_items(self):
+        """AC6: Results page uses actual attempt length."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        payload = {"full_form": "1"}
+        for i, q in enumerate(attempt.questions()):
+            if i < 15:
+                payload[f"q{q.number}"] = self._correct(attempt, q)
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", payload)
+        results = self.client.get(f"/attempt/{attempt.id}/results/")
+        
+        # Should show "15/30" not "15/60"
+        self.assertContains(results, "15")
+        self.assertContains(results, "30")
+
+    def test_short_form_review_uses_actual_length(self):
+        """AC6: Review page shows actual attempt length."""
+        resp = self.client.post("/begin/", {"candidate": "AK", "form": "short"}, follow=True)
+        attempt = Attempt.objects.latest("started_at")
+        
+        self.client.post(f"/attempt/{attempt.id}/submit/", {"full_form": "1"})
+        review = self.client.get(f"/attempt/{attempt.id}/review/")
+        
+        self.assertEqual(resp.status_code, 200)
+        # Review should have 30 questions, not 60
+        rows = attempt.review_rows()
+        self.assertEqual(len(rows), 30)

@@ -40,7 +40,7 @@ the anchor, edit `CUT_RAW` in `config/settings.py` — everything else follows f
 
 ## Editing the question bank
 
-Questions live in `exam/data/questions.json`. Each entry:
+Questions live in `exam/data/*.json`, one file per test (the file name is the test name). Each entry:
 
 ```json
 {
@@ -87,7 +87,7 @@ ccar_mock_exam/
 │   ├── models.py      Question, Attempt (timing + scoring live on Attempt)
 │   ├── views.py       start · take · autosave · submit · results · review
 │   ├── tests.py
-│   ├── data/questions.json
+│   ├── data/*.json
 │   └── management/commands/load_questions.py
 └── templates/exam/    base · start · take · results · review
 ```

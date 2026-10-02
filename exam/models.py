@@ -6,6 +6,11 @@ from django.db import models
 from django.utils import timezone
 
 LETTERS = ["A", "B", "C", "D"]
+DEFAULT_BANK = "questions"
+
+
+def bank_label(bank):
+    return bank.replace("_", " ").title()
 
 
 class Question(models.Model):
@@ -13,7 +18,8 @@ class Question(models.Model):
     MULTI = "multi"
     TYPE_CHOICES = [(SINGLE, "Multiple choice"), (MULTI, "Multiple response")]
 
-    number = models.PositiveIntegerField(unique=True)
+    bank = models.CharField(max_length=64, default=DEFAULT_BANK, db_index=True)
+    number = models.PositiveIntegerField()
     scenario = models.CharField(max_length=120)
     domain = models.CharField(max_length=4)
     qtype = models.CharField(max_length=10, choices=TYPE_CHOICES, default=SINGLE)
@@ -26,7 +32,10 @@ class Question(models.Model):
     explanation = models.TextField()
 
     class Meta:
-        ordering = ["number"]
+        ordering = ["bank", "number"]
+        constraints = [
+            models.UniqueConstraint(fields=["bank", "number"], name="unique_bank_number"),
+        ]
 
     def __str__(self):
         return f"Q{self.number} [{self.domain}] {self.text[:60]}"
@@ -53,10 +62,16 @@ class Question(models.Model):
 
 
 class Attempt(models.Model):
+    FULL = "full"
+    SHORT = "short"
+    FORM_CHOICES = [(FULL, "Full exam"), (SHORT, "Short practice")]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     candidate = models.CharField(max_length=120, blank=True)
+    bank = models.CharField(max_length=64, default=DEFAULT_BANK)
     started_at = models.DateTimeField(default=timezone.now)
     submitted_at = models.DateTimeField(null=True, blank=True)
+    form_type = models.CharField(max_length=10, choices=FORM_CHOICES, default=FULL)
     duration_minutes = models.PositiveIntegerField(default=120)
     order = models.JSONField(default=list)  # list of Question.number, in delivery order
     answers = models.JSONField(default=dict)  # {"<question number>": ["A", "C"]} display letters
@@ -75,6 +90,10 @@ class Attempt(models.Model):
     def __str__(self):
         state = "submitted" if self.submitted_at else "in progress"
         return f"Attempt {str(self.id)[:8]} ({state})"
+
+    @property
+    def bank_label(self):
+        return bank_label(self.bank)
 
     # -- timing ------------------------------------------------------------
     @property
@@ -140,7 +159,7 @@ class Attempt(models.Model):
 
     # -- questions / shuffled options --------------------------------------
     def questions(self):
-        qs = {q.number: q for q in Question.objects.filter(number__in=self.order)}
+        qs = {q.number: q for q in Question.objects.filter(bank=self.bank, number__in=self.order)}
         return [qs[n] for n in self.order if n in qs]
 
     def slots_for(self, q):

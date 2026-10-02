@@ -13,4 +13,5 @@ urlpatterns = [
     path("attempt/<uuid:attempt_id>/review/", views.review, name="review"),
     path("attempt/<uuid:attempt_id>/delete/", views.delete_attempt, name="delete_attempt"),
     path("results/delete-all/", views.delete_all_results, name="delete_all_results"),
+    path("results/delete-selected/", views.delete_selected_attempts, name="delete_selected_attempts"),
 ]

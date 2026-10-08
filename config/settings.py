@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -62,6 +63,20 @@ STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Railway terminates TLS and forwards plain HTTP. Without this, Django treats
+# the request as http while the browser sends an https Origin, and every POST
+# fails CSRF verification.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
+CSRF_TRUSTED_ORIGINS = ["https://*.up.railway.app"]
+_railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN", "").strip()
+if _railway_domain:
+    CSRF_TRUSTED_ORIGINS.append(f"https://{_railway_domain}")
+_extra_origins = os.environ.get("CSRF_TRUSTED_ORIGINS", "")
+CSRF_TRUSTED_ORIGINS.extend(
+    origin.strip() for origin in _extra_origins.split(",") if origin.strip()
+)
 
 # ---------------------------------------------------------------------------
 # Exam configuration (mirrors the Claude Certified Architect - Foundations
